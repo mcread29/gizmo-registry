@@ -2,6 +2,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { registerUnityDocs } from "../../packages/unity/src/server/docs/index.ts";
 import { gizmoExtension } from "../../packages/unity/src/server/index.ts";
 
 export { gizmoExtension };
@@ -9,6 +10,8 @@ export { gizmoExtension };
 const STOP_PLAY_MODE_CONFIRMATION = "stop_play_mode_for_compile";
 
 export default function unity(pi: ExtensionAPI) {
+  registerUnityDocs(pi);
+
   let currentContext: ExtensionContext | undefined;
 
   pi.on("tool_call", (_event, ctx) => {

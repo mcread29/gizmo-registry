@@ -8,6 +8,8 @@
     "./web": "./src/web/index.ts"
   },
   "dependencies": {
+    "@earendil-works/pi-ai": "0.84.3",
+    "@earendil-works/pi-coding-agent": "0.84.3",
     "@gizmo/design": "workspace:*",
     "@gizmo/extensions": "workspace:*",
     "@gizmo/protocol": "workspace:*",
@@ -15,6 +17,7 @@
     "@lucide/svelte": "^1.31.0",
     "@tanstack/svelte-virtual": "^3.13.36",
     "bits-ui": "^2.19.0",
-    "svelte": "latest"
+    "svelte": "latest",
+    "typebox": "1.3.14"
   }
 }
