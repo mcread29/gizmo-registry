@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "vitest run",
     "build": "tsx scripts/build-extensions.ts",
     "check": "tsc --noEmit",
     "format": "prettier --write .",
@@ -27,7 +27,8 @@
     "svelte": "^5.56.10",
     "tsx": "^4.23.12",
     "typescript": "^7.0.2",
-    "vite": "^8.2.2"
+    "vite": "^8.2.2",
+    "vitest": "4.1.11"
   },
   "private": "true",
   "type": "module"

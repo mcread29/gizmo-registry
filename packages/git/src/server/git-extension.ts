@@ -38,6 +38,8 @@ export const gizmoExtension: GizmoServerExtension = {
     switch (operationId) {
       case "status":
         return service.status(workspacePath, signal);
+      case "commit-context":
+        return service.commitContext(workspacePath);
       case "commit": {
         const message =
           typeof (input as { message?: unknown } | null)?.message === "string"
