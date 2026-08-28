@@ -59,10 +59,15 @@ export async function executeUnityScript(
   source: string,
   options: UnityScriptOptions,
 ): Promise<UnityScriptResult> {
+  const timeoutSeconds = Math.min(
+    300,
+    Math.max(1, options.timeoutSeconds ?? 60),
+  );
   const runner = options.runner ?? new UnityRunner({ timeoutMs: 300_000 });
   const catalog = await listUnityCommands(runner, {
     projectPath: options.projectPath,
     signal: options.signal,
+    timeoutMs: timeoutSeconds * 1_000,
   });
   if (catalog.state === "unavailable" || catalog.state === "error") {
     return {
@@ -89,7 +94,7 @@ export async function executeUnityScript(
 
   return await runWorker(checked.javascript, catalog.commands, runner, {
     ...options,
-    timeoutSeconds: Math.min(300, Math.max(1, options.timeoutSeconds ?? 60)),
+    timeoutSeconds,
   });
 }
 
@@ -230,6 +235,7 @@ async function runWorker(
       settled = true;
       clearTimeout(timeout);
       signal.removeEventListener("abort", abort);
+      controller.abort(new Error("Unity script finished"));
       void worker.terminate();
       resolve(result);
     };
@@ -242,16 +248,18 @@ async function runWorker(
       }
       if (message.type === "rpc") {
         void handleRpc(message as RpcRequest, commands, runner, options, signal)
-          .then((value) =>
-            worker.postMessage({ type: "rpc", id: message.id, value }),
-          )
-          .catch((error) =>
-            worker.postMessage({
-              type: "rpc",
-              id: message.id,
-              error: error instanceof Error ? error.message : String(error),
-            }),
-          );
+          .then((value) => {
+            if (!settled)
+              worker.postMessage({ type: "rpc", id: message.id, value });
+          })
+          .catch((error) => {
+            if (!settled)
+              worker.postMessage({
+                type: "rpc",
+                id: message.id,
+                error: error instanceof Error ? error.message : String(error),
+              });
+          });
         return;
       }
       finish({

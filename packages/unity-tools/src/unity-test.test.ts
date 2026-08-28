@@ -7,8 +7,12 @@ describe("runUnityTests", () => {
     const runner = sequenceRunner(
       catalog("run_tests"),
       jsonResult("command run_tests", {
-        result: {
-          success: false,
+        result: { success: true, result: "running" },
+      }),
+      catalog("test_status"),
+      jsonResult("command test_status", {
+        result: JSON.stringify({
+          status: "completed",
           summary: {
             total: 1,
             passed: 0,
@@ -26,7 +30,7 @@ describe("runUnityTests", () => {
                 "Game.PlayerTests.Jumps () (at Assets/Tests/PlayerTests.cs:42)",
             },
           ],
-        },
+        }),
       }),
     );
 
@@ -52,6 +56,8 @@ describe("runUnityTests", () => {
       ],
       errors: [{ code: "UNITY_TESTS_FAILED" }],
     });
+    const runArguments = runner.run.mock.calls[1]?.[0] as string[];
+    expect(runArguments).toContain("true");
   });
 });
 

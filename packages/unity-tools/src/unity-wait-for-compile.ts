@@ -34,7 +34,74 @@ export interface UnityCompileDetails extends UnityJsonDetails {
   compilationPending: false;
 }
 
-export async function waitForUnityCompile(
+export function waitForUnityCompile(
+  runner: UnityCommandRunner,
+  options: WaitForUnityCompileOptions,
+): Promise<UnityCompileDetails> {
+  const timeoutMs = options.timeoutMs ?? 120_000;
+  const controller = new AbortController();
+  const startedAt = performance.now();
+  let settled = false;
+
+  return new Promise((resolve) => {
+    const settle = (details: UnityCompileDetails) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      options.signal?.removeEventListener("abort", abort);
+      resolve(details);
+    };
+    const abort = () => {
+      controller.abort();
+      settle(
+        interruptedDetails(
+          "error",
+          "UNITY_CLI_ABORTED",
+          "Unity compilation was cancelled.",
+          startedAt,
+        ),
+      );
+    };
+    const timeout = setTimeout(() => {
+      controller.abort();
+      settle(
+        interruptedDetails(
+          "timeout",
+          "UNITY_COMPILE_TIMEOUT",
+          `Unity did not finish compiling within ${Math.ceil(timeoutMs / 1_000)} seconds.`,
+          startedAt,
+        ),
+      );
+    }, timeoutMs);
+
+    if (options.signal?.aborted) abort();
+    else options.signal?.addEventListener("abort", abort, { once: true });
+
+    waitForUnityCompileInternal(runner, {
+      ...options,
+      timeoutMs,
+      signal: controller.signal,
+    }).then(settle, (error: unknown) => {
+      settle(
+        interruptedDetails(
+          "error",
+          "UNITY_COMPILE_ERROR",
+          error instanceof Error ? error.message : String(error),
+          startedAt,
+        ),
+      );
+    });
+  });
+}
+
+/**
+ * The CLI can remain pending while the Editor reloads its domain, and process
+ * cancellation is not reliable enough to be the tool's deadline (notably on
+ * Windows). Keep the workflow separate from the outer hard deadline so the
+ * tool always produces a result even if an individual CLI invocation never
+ * closes.
+ */
+async function waitForUnityCompileInternal(
   runner: UnityCommandRunner,
   options: WaitForUnityCompileOptions,
 ): Promise<UnityCompileDetails> {
@@ -270,6 +337,27 @@ function failureState(
 
 function positiveInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+function interruptedDetails(
+  state: "timeout" | "error",
+  code: string,
+  message: string,
+  startedAt: number,
+): UnityCompileDetails {
+  return {
+    ok: false,
+    state,
+    attempts: 0,
+    command: [],
+    exitCode: null,
+    durationMs: Math.round(performance.now() - startedAt),
+    data: null,
+    errors: [{ code, message }],
+    warnings: [],
+    consoleEntries: [],
+    compilationPending: false,
+  };
 }
 
 function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {

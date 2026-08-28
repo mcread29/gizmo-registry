@@ -1,4 +1,4 @@
-import { executeUnityCommand } from "./unity-command";
+import { executeUnityCommand, type UnityCommandDetails } from "./unity-command";
 import { sourceLocation } from "./unity-diagnostics";
 import { asRecord, finiteNumber, type UnityCliMessage } from "./unity-json";
 import type { UnityCommandRunner } from "./unity-runner";
@@ -52,7 +52,9 @@ export async function runUnityTests(
   options: RunUnityTestsOptions,
 ): Promise<UnityTestDetails> {
   const mode = options.mode ?? "editor";
-  const details = await executeUnityCommand(runner, {
+  const timeoutSeconds = options.timeoutSeconds ?? 300;
+  const startedAt = performance.now();
+  let details = await executeUnityCommand(runner, {
     projectPath: options.projectPath,
     command: "run_tests",
     parameters: {
@@ -60,26 +62,69 @@ export async function runUnityTests(
       filter: options.filter ?? "",
       filter_type: options.filterType ?? "testName",
       include_explicit: options.includeExplicit ?? false,
-      async_tests: false,
-      timeout: options.timeoutSeconds ?? 300,
+      // Synchronous test execution blocks Pipeline's Editor main-thread
+      // dispatcher and can leave the server permanently unreachable. Async mode
+      // returns immediately and exposes completion through test_status.
+      async_tests: true,
+      timeout: timeoutSeconds,
     },
-    timeoutSeconds: (options.timeoutSeconds ?? 300) + 15,
+    timeoutSeconds: 15,
     signal: options.signal,
   });
-  if (!details.ok) {
-    return {
-      ok: false,
-      state: details.state === "disconnected" ? "disconnected" : "error",
-      mode,
-      ...(options.filter ? { filter: options.filter } : {}),
-      durationMs: details.durationMs,
-      summary: emptySummary(),
-      tests: [],
-      errors: details.errors,
-      warnings: details.warnings,
-    };
+  if (!details.ok) return commandFailure(details, mode, options);
+
+  while (performance.now() - startedAt < timeoutSeconds * 1_000) {
+    if (options.signal?.aborted) {
+      return interruptedTestResult(
+        mode,
+        options,
+        details,
+        "UNITY_CLI_ABORTED",
+        "Unity test execution was cancelled.",
+        startedAt,
+      );
+    }
+    details = await executeUnityCommand(runner, {
+      projectPath: options.projectPath,
+      command: "test_status",
+      timeoutSeconds: 10,
+      signal: options.signal,
+    });
+    if (details.ok) {
+      const result = commandResult(details.data);
+      const status = string(field(result, "status"))?.toLowerCase();
+      if (status === "completed") {
+        return completedTestResult(details, mode, options);
+      }
+      if (status === "error" || status === "cancelled") {
+        return interruptedTestResult(
+          mode,
+          options,
+          details,
+          "UNITY_TESTS_ERROR",
+          string(field(result, "message")) ?? `Unity test execution ${status}.`,
+          startedAt,
+        );
+      }
+    }
+    await wait(500, options.signal);
   }
 
+  return interruptedTestResult(
+    mode,
+    options,
+    details,
+    "UNITY_TEST_TIMEOUT",
+    `Unity tests did not finish within ${timeoutSeconds} seconds.`,
+    startedAt,
+  );
+}
+
+function completedTestResult(
+  details: UnityCommandDetails,
+  mode: UnityTestMode,
+  options: RunUnityTestsOptions,
+): UnityTestDetails {
   const result = commandResult(details.data);
   const summary = testSummary(field(result, "summary"));
   const tests = array(field(result, "results"))
@@ -116,6 +161,45 @@ export async function runUnityTests(
     summary: { ...summary, total },
     tests,
     errors,
+    warnings: details.warnings,
+  };
+}
+
+function commandFailure(
+  details: UnityCommandDetails,
+  mode: UnityTestMode,
+  options: RunUnityTestsOptions,
+): UnityTestDetails {
+  return {
+    ok: false,
+    state: details.state === "disconnected" ? "disconnected" : "error",
+    mode,
+    ...(options.filter ? { filter: options.filter } : {}),
+    durationMs: details.durationMs,
+    summary: emptySummary(),
+    tests: [],
+    errors: details.errors,
+    warnings: details.warnings,
+  };
+}
+
+function interruptedTestResult(
+  mode: UnityTestMode,
+  options: RunUnityTestsOptions,
+  details: UnityCommandDetails,
+  code: string,
+  message: string,
+  startedAt: number,
+): UnityTestDetails {
+  return {
+    ok: false,
+    state: details.state === "disconnected" ? "disconnected" : "error",
+    mode,
+    ...(options.filter ? { filter: options.filter } : {}),
+    durationMs: Math.round(performance.now() - startedAt),
+    summary: emptySummary(),
+    tests: [],
+    errors: [...details.errors, { code, message }],
     warnings: details.warnings,
   };
 }
@@ -182,4 +266,17 @@ function array(value: unknown): unknown[] {
 
 function string(value: unknown): string | undefined {
   return typeof value === "string" && value ? value : undefined;
+}
+
+function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    };
+    const timeout = setTimeout(done, milliseconds);
+    signal?.addEventListener("abort", done, { once: true });
+  });
 }

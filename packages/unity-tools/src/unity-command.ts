@@ -30,9 +30,11 @@ export async function executeUnityCommand(
   runner: UnityCommandRunner,
   options: ExecuteUnityCommandOptions,
 ): Promise<UnityCommandDetails> {
+  const timeoutSeconds = options.timeoutSeconds ?? 30;
   const listed = await listUnityCommands(runner, {
     projectPath: options.projectPath,
     signal: options.signal,
+    timeoutMs: (timeoutSeconds + 5) * 1_000,
   });
   if (!listed.ok) return listingFailure(listed, options);
   const registered = listed.commands.find(
@@ -74,7 +76,6 @@ export async function executeUnityCommand(
     };
   }
 
-  const timeoutSeconds = options.timeoutSeconds ?? 30;
   const args = argumentResult.args;
   const result = await runUnityJson(
     runner,
