@@ -1,0 +1,21 @@
+{
+  "name": "@gizmo/unity-tools",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "check": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "@gizmo/protocol": "workspace:*",
+    "@earendil-works/pi-coding-agent": "^0.84.2",
+    "typebox": "^1.3.14",
+    "typescript": "^6.0.0"
+  }
+}

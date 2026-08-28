@@ -3,9 +3,29 @@
   "build": "pnpm install --frozen-lockfile && pnpm build",
   "extensions": [
     {
+      "id": "activity",
+      "name": "Activity",
+      "description": "Inspect tool activity in the current workspace"
+    },
+    {
       "id": "ask-user",
       "name": "Ask the user",
       "description": "Let the agent ask multiple-choice questions with a native chat card"
+    },
+    {
+      "id": "git",
+      "name": "Git",
+      "description": "Git status, changes, commit tools, and workspace integration"
+    },
+    {
+      "id": "svelte",
+      "name": "Svelte",
+      "description": "Svelte project guidance and Gizmo workspace integration"
+    },
+    {
+      "id": "unity",
+      "name": "Unity",
+      "description": "Unity tools, project services, console, and editor integration"
     }
   ]
 }

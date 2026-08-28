@@ -1,0 +1,19 @@
+{
+  "name": "@gizmo/unity",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./server": "./src/server/index.ts",
+    "./web": "./src/web/index.ts"
+  },
+  "dependencies": {
+    "@lucide/svelte": "^1.31.0",
+    "@tanstack/svelte-virtual": "^3.13.36",
+    "@gizmo/design": "workspace:*",
+    "@gizmo/extensions": "workspace:*",
+    "@gizmo/protocol": "workspace:*",
+    "@gizmo/unity-tools": "workspace:*",
+    "svelte": "latest"
+  }
+}
