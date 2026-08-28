@@ -93,6 +93,11 @@ export async function buildWebExtension(
     logLevel: "warn",
     plugins: [svelte({ configFile: false }), shareHostModules()],
     resolve: { conditions: ["browser"] },
+    // Some browser-targeted dependencies still use the Node-style development
+    // guard. Runtime extension modules execute directly in the webview, where
+    // `process` does not exist, so replace it while bundling rather than
+    // requiring the host to install a Node compatibility shim.
+    define: { "process.env.NODE_ENV": JSON.stringify("production") },
     build: {
       write: false,
       emptyOutDir: false,
