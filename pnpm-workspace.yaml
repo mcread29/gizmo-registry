@@ -3,4 +3,6 @@ overrides:
   '@jridgewell/sourcemap-codec': 1.5.0
 
 allowBuilds:
+  '@google/genai': true
   esbuild: true
+  protobufjs: true
