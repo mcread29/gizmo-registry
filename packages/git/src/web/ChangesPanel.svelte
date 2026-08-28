@@ -6,6 +6,7 @@
 		Copy,
 		FileCode2,
 		Folder,
+		FileDiff,
 		GitCommit,
 		RefreshCw,
 		Undo2,
@@ -47,10 +48,27 @@
 				: { file: status.path, changes: [], added: 0, removed: 0 };
 		}),
 	);
-	let tree = $derived(changeTree(files, projectPath));
-	const collapsedFolders = new SvelteSet<string>();
-	let rows = $derived(changeTreeRows(tree, collapsedFolders));
+	let collapsedFolders = $state(new Set<string>());
+	let rows = $derived.by(() => {
+		const groups = [
+			{ name: 'Unstaged', files: files.filter((file) => {
+				const status = statusByPath.get(normalize(file.file));
+				return !status || !staged(status);
+			}) },
+			{ name: 'Staged', files: files.filter((file) => {
+				const status = statusByPath.get(normalize(file.file));
+				return status ? staged(status) : false;
+			}) },
+		];
+		return groups.flatMap((group) => {
+			if (!group.files.length) return [];
+			const tree = changeTree(group.files, projectPath);
+			return [{ node: { kind: 'folder' as const, name: group.name, path: `__${group.name}`, children: tree }, depth: 0 }];
+		}).flatMap((row) => changeTreeRows([row.node], collapsedFolders));
+	});
 	const expanded = new SvelteSet<string>();
+	const diffs = $state(new Map<string, string>());
+	const loadingDiffs = new SvelteSet<string>();
 	let reverting = $state<string>();
 	let commitDialogOpen = $state(false);
 	let commitMessage = $state('');
@@ -68,12 +86,38 @@
 			);
 	});
 
-	function toggle(file: string) {
-		if (!expanded.delete(file)) expanded.add(file);
+	async function toggle(file: string) {
+		if (expanded.has(file)) {
+			expanded.delete(file);
+			return;
+		}
+		expanded.add(file);
+		if (diffs.has(file) || loadingDiffs.has(file)) return;
+		loadingDiffs.add(file);
+		try {
+			const result = (await store.invokeProjectExtension(projectPath!, 'git', 'diff', { file })) as { diff?: string };
+			diffs.set(file, result.diff ?? '');
+		} finally {
+			loadingDiffs.delete(file);
+		}
+	}
+
+	function nodeGroup(node: import('./change-tree').ChangeTreeNode) {
+		if (node.kind === 'file') {
+			const status = statusByPath.get(normalize(node.entry.file));
+			return status && staged(status) ? 'staged' : 'unstaged';
+		}
+		return node.path.startsWith('__')
+			? node.name.toLowerCase()
+			: node.children.some((child) => nodeGroup(child) === 'unstaged')
+				? 'unstaged'
+				: 'staged';
 	}
 
 	function toggleFolder(path: string) {
-		if (!collapsedFolders.delete(path)) collapsedFolders.add(path);
+		const next = new Set(collapsedFolders);
+		if (!next.delete(path)) next.add(path);
+		collapsedFolders = next;
 	}
 
 	async function copyPatch(patch: string) {
@@ -177,7 +221,7 @@
 					? 'Git status unavailable'
 					: store.gitStatus.clean
 						? 'Working tree clean'
-						: `${store.gitStatus.files.length} repository change${store.gitStatus.files.length === 1 ? '' : 's'}`}</strong
+						: 'Working tree'}</strong
 		>
 		{#if store.gitStatus}<span>{store.gitStatus.branch}</span>{/if}
 	</div>
@@ -226,11 +270,13 @@
 		<span>{statuses.filter(staged).length} staged</span>
 	</div>
 	<div data-ui="change-list">
-		{#each rows as row (row.node.path)}
+		{#each rows as row, index (index)}
 			{#if row.node.kind === 'folder'}
 				<button
 					type="button"
 					data-ui="change-folder"
+					data-group={nodeGroup(row.node)}
+					data-group-header={row.node.path.startsWith('__') || undefined}
 					style={`--depth:${row.depth}`}
 					aria-expanded={!collapsedFolders.has(row.node.path)}
 					onclick={() => toggleFolder(row.node.path)}
@@ -238,7 +284,11 @@
 					{#if collapsedFolders.has(row.node.path)}<ChevronRight
 							size={12}
 						/>{:else}<ChevronDown size={12} />{/if}
-					<Folder size={14} />
+					{#if row.node.path.startsWith('__')}
+						{#if row.node.name === 'Staged'}<GitCommit size={14} />{:else}<FileDiff
+							size={14}
+						/>{/if}
+					{:else}<Folder size={14} />{/if}
 					<strong>{row.node.name}</strong>
 				</button>
 			{:else}
@@ -247,18 +297,21 @@
 				{@const status = statusByPath.get(normalize(entry.file))}
 				<section
 					data-ui="change-file"
+					data-group={nodeGroup(row.node)}
 					data-expanded={expanded.has(entry.file) || undefined}
 					style={`--depth:${row.depth}`}
 				>
 					<button
 						type="button"
 						data-ui="change-header"
-						data-expandable={Boolean(authored) || undefined}
-						aria-expanded={authored ? expanded.has(entry.file) : undefined}
-						onclick={() => authored && toggle(entry.file)}
+						data-expandable={true}
+						aria-expanded={expanded.has(entry.file)}
+						onclick={() => void toggle(entry.file)}
 					>
 						<span data-ui="change-tree-spacer"></span>
-						<FileCode2 size={14} />
+						{#if status && staged(status)}<GitCommit size={14} />{:else}<FileDiff
+							size={14}
+						/>{/if}
 						<span title={entry.file}>{row.node.name}</span>
 						{#if authored}
 							<small data-kind="added">+{entry.added}</small>
@@ -274,8 +327,12 @@
 							>
 						{/if}
 					</button>
-					{#if authored && expanded.has(entry.file)}
-						{#each authored.changes as change (change.toolCallId)}
+					{#if expanded.has(entry.file)}
+						{@const patch = diffs.get(entry.file) ?? authored?.changes[0]?.patch ?? ''}
+						{#if loadingDiffs.has(entry.file)}
+							<div data-ui="change-body">Loading diff…</div>
+						{:else}
+							{@const change = { toolCallId: `git-${entry.file}`, patch, status: 'complete' as const }}
 							<div data-ui="change-body">
 								<DiffView
 									diff={change.patch}
@@ -318,7 +375,7 @@
 									</Tooltip>
 								</div>
 							</div>
-						{/each}
+						{/if}
 					{/if}
 				</section>
 			{/if}

@@ -17,4 +17,10 @@ export interface GitHostStore {
   commitAll(message: string): Promise<GitCommitResult>;
   generateCommitMessage(): Promise<string>;
   revertFile(file: string, patch: string): Promise<void>;
+  invokeProjectExtension(
+    projectPath: string,
+    extensionId: string,
+    operation: string,
+    input?: unknown,
+  ): Promise<unknown>;
 }

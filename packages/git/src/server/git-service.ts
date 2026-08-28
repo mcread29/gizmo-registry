@@ -27,6 +27,16 @@ export class GitService {
     return { rootPath, branch, clean: files.length === 0, files };
   }
 
+  async diff(projectPath: string, file: string, signal?: AbortSignal) {
+    const rootPath = await this.#root(projectPath, signal);
+    const { stdout } = await this.#git(
+      rootPath,
+      ["diff", "HEAD", "--no-ext-diff", "--unified=3", "--", file],
+      signal,
+    );
+    return { file, diff: stdout };
+  }
+
   async commitContext(
     projectPath: string,
     signal?: AbortSignal,

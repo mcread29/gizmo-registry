@@ -21,6 +21,7 @@ function descriptor(): ExtensionDescriptor {
         requiresConfirmation: false,
       },
       { id: "status", mutates: false, requiresConfirmation: false },
+      { id: "diff", mutates: false, requiresConfirmation: false },
       {
         id: "commit",
         mutates: true,
@@ -45,6 +46,12 @@ export const gizmoExtension: GizmoServerExtension = {
         return service.status(workspacePath, signal);
       case "commit-context":
         return service.commitContext(workspacePath);
+      case "diff": {
+        const file = typeof (input as { file?: unknown } | null)?.file === "string"
+          ? (input as { file: string }).file
+          : "";
+        return service.diff(workspacePath, file, signal);
+      }
       case "commit": {
         const message =
           typeof (input as { message?: unknown } | null)?.message === "string"
