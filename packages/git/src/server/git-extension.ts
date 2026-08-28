@@ -15,6 +15,11 @@ function descriptor(): ExtensionDescriptor {
     apiVersion,
     capabilities: ["status", "commit"],
     operations: [
+      {
+        id: "commit-context",
+        mutates: false,
+        requiresConfirmation: false,
+      },
       { id: "status", mutates: false, requiresConfirmation: false },
       {
         id: "commit",
