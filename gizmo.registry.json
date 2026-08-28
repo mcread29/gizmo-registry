@@ -18,6 +18,11 @@
       "description": "Git status, changes, commit tools, and workspace integration"
     },
     {
+      "id": "skill-authoring",
+      "name": "Skill Authoring",
+      "description": "Skills for creating effective Pi skills and agent guidance"
+    },
+    {
       "id": "svelte",
       "name": "Svelte",
       "description": "Svelte project guidance and Gizmo workspace integration"
