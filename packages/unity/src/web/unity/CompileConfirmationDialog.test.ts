@@ -1,9 +1,7 @@
 import { protocolVersion } from "@gizmo/protocol";
 import { fireEvent, render } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
-import { defaultAppSettings } from "../../app-settings";
-import type { AgentStore } from "../../agent-client";
-import { WorkspaceLayout } from "../shell/workspace.svelte";
+import type { UnityHost, UnityLayout } from "../host";
 import CompileConfirmationDialog from "./CompileConfirmationDialog.svelte";
 
 describe("CompileConfirmationDialog", () => {
@@ -21,8 +19,8 @@ describe("CompileConfirmationDialog", () => {
     const store = {
       pendingConfirmations: [confirmation],
       resolveConfirmation,
-    } as unknown as AgentStore;
-    const layout = new WorkspaceLayout({ ...defaultAppSettings });
+    } as unknown as UnityHost;
+    const layout: UnityLayout = { compilePlayModePolicy: "ask" };
     const { findByRole } = render(CompileConfirmationDialog, { store, layout });
 
     await fireEvent.click(await findByRole("button", { name: "Keep playing" }));
@@ -45,11 +43,8 @@ describe("CompileConfirmationDialog", () => {
     const store = {
       pendingConfirmations: [confirmation],
       resolveConfirmation,
-    } as unknown as AgentStore;
-    const layout = new WorkspaceLayout({
-      ...defaultAppSettings,
-      compilePlayModePolicy: "stop",
-    });
+    } as unknown as UnityHost;
+    const layout: UnityLayout = { compilePlayModePolicy: "stop" };
     const { queryByRole } = render(CompileConfirmationDialog, {
       store,
       layout,

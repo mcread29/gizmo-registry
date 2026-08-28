@@ -8,12 +8,13 @@
     "./web": "./src/web/index.ts"
   },
   "dependencies": {
-    "@lucide/svelte": "^1.31.0",
-    "@tanstack/svelte-virtual": "^3.13.36",
     "@gizmo/design": "workspace:*",
     "@gizmo/extensions": "workspace:*",
     "@gizmo/protocol": "workspace:*",
     "@gizmo/unity-tools": "workspace:*",
+    "@lucide/svelte": "^1.31.0",
+    "@tanstack/svelte-virtual": "^3.13.36",
+    "bits-ui": "^2.19.0",
     "svelte": "latest"
   }
 }

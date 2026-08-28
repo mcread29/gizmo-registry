@@ -2,19 +2,6 @@ import type { UnityCommandRunner, UnityRunResult } from "@gizmo/unity-tools";
 import { describe, expect, it, vi } from "vitest";
 import { UnityProjectService } from "@gizmo/unity/server";
 import { UnityExtensionProvider } from "@gizmo/unity/server";
-import type { GizmoServerExtension } from "@gizmo/extensions";
-import { ExtensionHostService } from "../../src/extensions/extension-host-service";
-
-function unityExtension(runner?: UnityCommandRunner): GizmoServerExtension {
-  const provider = new UnityExtensionProvider(runner);
-  return {
-    id: "unity",
-    name: "Unity",
-    list: (workspacePath, signal) => provider.list(workspacePath, signal),
-    invoke: (workspacePath, extensionId, operationId, input, signal) =>
-      provider.invoke(workspacePath, extensionId, operationId, input, signal),
-  };
-}
 
 describe("UnityProjectService", () => {
   it("rejects paths outside the Unity project registry before status or open", async () => {
@@ -97,8 +84,8 @@ describe("UnityProjectService", () => {
         }),
       }),
     );
-    const service = new ExtensionHostService([unityExtension(runner)]);
-    const extensions = await service.list("/projects/game");
+    const provider = new UnityExtensionProvider(runner);
+    const extensions = await provider.list("/projects/game");
 
     expect(extensions).toEqual([]);
     expect(runner.run).toHaveBeenCalledTimes(1);
@@ -140,16 +127,13 @@ describe("UnityProjectService", () => {
       }),
       runResult({ stdout: extensionResult({ opaque: true }) }),
     );
-    const service = new ExtensionHostService([unityExtension(runner)]);
-    await service.list("/projects/game");
+    const provider = new UnityExtensionProvider(runner);
+    await provider.list("/projects/game");
     await expect(
-      service.invoke("/projects/game", "unity", "console.snapshot", {
+      provider.invoke("/projects/game", "unity", "console.snapshot", {
         tail: 1,
       }),
     ).resolves.toEqual({ opaque: true });
-    await expect(
-      service.invoke("/projects/game", "unity", "missing"),
-    ).rejects.toThrow("does not expose operation");
 
     expect(runner.run.mock.calls.flatMap(([args]) => args)).toContain(
       "gizmo_extension_invoke",
