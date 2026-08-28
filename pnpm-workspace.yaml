@@ -1,8 +1,8 @@
 overrides:
   typebox: 1.3.14
-  '@jridgewell/sourcemap-codec': 1.5.0
+  "@jridgewell/sourcemap-codec": 1.5.0
 
 allowBuilds:
-  '@google/genai': true
+  "@google/genai": true
   esbuild: true
   protobufjs: true
