@@ -1,0 +1,6 @@
+overrides:
+  typebox: 1.3.14
+  '@jridgewell/sourcemap-codec': 1.5.0
+
+allowBuilds:
+  esbuild: true
