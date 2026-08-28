@@ -1,0 +1,11 @@
+{
+  "extensionsDir": "extensions",
+  "build": "pnpm install --frozen-lockfile && pnpm build",
+  "extensions": [
+    {
+      "id": "ask-user",
+      "name": "Ask the user",
+      "description": "Let the agent ask multiple-choice questions with a native chat card"
+    }
+  ]
+}
