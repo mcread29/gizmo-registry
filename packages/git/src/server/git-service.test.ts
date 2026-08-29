@@ -48,6 +48,27 @@ describe("GitService", () => {
     });
   });
 
+  it("stages and unstages individual files", async () => {
+    await writeFile(join(directory, "tracked.txt"), "after\n");
+    await writeFile(join(directory, "other.txt"), "other\n");
+    const service = new GitService();
+
+    await service.stageFile(directory, "tracked.txt");
+    expect(await service.status(directory)).toMatchObject({
+      files: expect.arrayContaining([
+        { path: "tracked.txt", index: "M", workingTree: " " },
+        { path: "other.txt", index: "?", workingTree: "?" },
+      ]),
+    });
+
+    await service.unstageFile(directory, "tracked.txt");
+    expect(await service.status(directory)).toMatchObject({
+      files: expect.arrayContaining([
+        { path: "tracked.txt", index: " ", workingTree: "M" },
+      ]),
+    });
+  });
+
   it("stages and commits the entire working tree", async () => {
     await writeFile(join(directory, "new.txt"), "new\n");
     const service = new GitService();

@@ -4,6 +4,60 @@ import type { GitHostStore } from "./host";
 import ChangesPanel from "./ChangesPanel.svelte";
 
 describe("ChangesPanel", () => {
+  it("shows a partially staged file in both sections and stages it", async () => {
+    const stageFile = vi.fn(async () => {});
+    const store = {
+      messages: [],
+      gitStatus: {
+        rootPath: "/projects/game",
+        branch: "main",
+        clean: false,
+        files: [{ path: "Player.cs", index: "M", workingTree: "M" }],
+      },
+      gitLoading: false,
+      gitCommitting: false,
+      refreshGitStatus: vi.fn(async () => {}),
+      generateCommitMessage: vi.fn(async () => "Update player movement"),
+      commitAll: vi.fn(async () => ({
+        rootPath: "/projects/game",
+        commit: "0123456789abcdef",
+        message: "Update player movement",
+      })),
+      revertFile: vi.fn(async () => {}),
+    } satisfies GitHostStore;
+
+    const { getAllByText, getByRole, queryByText, unmount } = render(
+      ChangesPanel,
+      {
+        store,
+        projectPath: "/projects/game",
+        stageFile,
+        unstageFile: vi.fn(async () => {}),
+      },
+    );
+
+    expect(
+      getByRole("button", { name: /Unstaged Changes \(1\)/ }),
+    ).toBeInTheDocument();
+    expect(
+      getByRole("button", { name: /Staged Changes \(1\)/ }),
+    ).toBeInTheDocument();
+    expect(getAllByText("Player.cs")).toHaveLength(2);
+
+    await fireEvent.click(getByRole("button", { name: "Stage file" }));
+    expect(stageFile).toHaveBeenCalledWith("Player.cs");
+
+    await fireEvent.click(
+      getByRole("button", { name: /Unstaged Changes \(1\)/ }),
+    );
+    expect(getAllByText("Player.cs")).toHaveLength(1);
+    await fireEvent.click(
+      getByRole("button", { name: /Staged Changes \(1\)/ }),
+    );
+    expect(queryByText("Player.cs")).not.toBeInTheDocument();
+    unmount();
+  });
+
   it("lets the user review Pi’s message before committing everything", async () => {
     const generateCommitMessage = vi.fn(async () => "Update player movement");
     const commitAll = vi.fn(async (message: string) => ({
@@ -31,6 +85,8 @@ describe("ChangesPanel", () => {
       {
         store,
         projectPath: "/projects/game",
+        stageFile: vi.fn(async () => {}),
+        unstageFile: vi.fn(async () => {}),
       },
     );
     expect(getByText("Player.cs")).toBeInTheDocument();
