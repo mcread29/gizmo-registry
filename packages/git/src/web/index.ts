@@ -35,6 +35,12 @@ export interface GitStatusBarItem {
 
 export interface GitCommandStore extends GitHostStore {
   selectedProjectPath?: string;
+  invokeProjectExtension(
+    projectPath: string,
+    extensionId: string,
+    operation: string,
+    input?: unknown,
+  ): Promise<unknown>;
 }
 
 async function commitAll(store: GitHostStore): Promise<void> {
@@ -66,14 +72,33 @@ export { patchFileName } from "./thread-changes";
 export const gizmoWebExtension = {
   id: "git",
   name: "Git",
-  inspectorTabs(context: { store: GitHostStore }): GitInspectorTab[] {
+  inspectorTabs(context: {
+    store: GitCommandStore;
+    projectPath?: string;
+  }): GitInspectorTab[] {
+    const updateStage = async (
+      operation: "stage" | "unstage",
+      path: string,
+    ) => {
+      if (!context.projectPath) throw new Error("No project selected");
+      await context.store.invokeProjectExtension(
+        context.projectPath,
+        "git",
+        operation,
+        { path },
+      );
+      await context.store.refreshGitStatus();
+    };
     return [
       {
         id: "git",
         label: "Git",
         badge: context.store.gitStatus?.files.length ?? 0,
         component: ChangesPanel as Component<any>,
-        props: {},
+        props: {
+          stageFile: (path: string) => updateStage("stage", path),
+          unstageFile: (path: string) => updateStage("unstage", path),
+        },
       },
     ];
   },

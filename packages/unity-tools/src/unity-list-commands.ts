@@ -10,6 +10,7 @@ export interface UnityListCommandsOptions {
   query?: string;
   limit?: number;
   signal?: AbortSignal;
+  timeoutMs?: number;
 }
 
 export interface UnityCommandParameter {
@@ -43,7 +44,10 @@ export async function listUnityCommands(
     "list",
     ...(options.projectPath ? ["--project-path", options.projectPath] : []),
   ];
-  const result = await runUnityJson(runner, args, { signal: options.signal });
+  const result = await runUnityJson(runner, args, {
+    signal: options.signal,
+    timeoutMs: options.timeoutMs,
+  });
   const catalog = extractCommands(result.data);
   const matches = filterCommands(catalog, options.query);
   const commands = options.limit ? matches.slice(0, options.limit) : matches;

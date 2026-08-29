@@ -34,6 +34,7 @@ export async function waitForUnityCommand(
   const catalog = await listUnityCommands(runner, {
     projectPath: options.projectPath,
     signal: options.signal,
+    timeoutMs: Math.min(options.timeoutMs ?? 120_000, 15_000),
   });
   const registeredCommand = catalog.commands.find(
     (command) => command.name === options.command,

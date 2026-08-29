@@ -62,6 +62,11 @@ export class UnityRunner implements UnityCommandRunner {
     let spawnError: string | undefined;
     let terminating = false;
     let forceKillTimer: NodeJS.Timeout | undefined;
+    let closeFallbackTimer: NodeJS.Timeout | undefined;
+    let settle: (
+      exitCode: number | null,
+      signal: NodeJS.Signals | null,
+    ) => void = () => {};
 
     const child = spawn(this.#executable, [...args], {
       cwd: options.cwd,
@@ -75,10 +80,17 @@ export class UnityRunner implements UnityCommandRunner {
         return;
       terminating = true;
       child.kill("SIGTERM");
-      forceKillTimer = setTimeout(
-        () => child.kill("SIGKILL"),
-        this.#killGraceMs,
-      );
+      forceKillTimer = setTimeout(() => {
+        child.kill("SIGKILL");
+        // `close` waits for inherited stdio handles too. A launcher can die
+        // while one of its descendants keeps those handles open forever, so
+        // process signals alone are not a completion guarantee.
+        closeFallbackTimer = setTimeout(
+          () => settle(child.exitCode, child.signalCode),
+          this.#killGraceMs,
+        );
+        closeFallbackTimer.unref();
+      }, this.#killGraceMs);
       forceKillTimer.unref();
     };
     const abort = () => {
@@ -111,10 +123,16 @@ export class UnityRunner implements UnityCommandRunner {
     else options.signal?.addEventListener("abort", abort, { once: true });
 
     return new Promise((resolve) => {
-      child.once("close", (exitCode, signal) => {
+      let settled = false;
+      settle = (exitCode, signal) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timeout);
         if (forceKillTimer) clearTimeout(forceKillTimer);
+        if (closeFallbackTimer) clearTimeout(closeFallbackTimer);
         options.signal?.removeEventListener("abort", abort);
+        child.stdout.destroy();
+        child.stderr.destroy();
         resolve({
           ok:
             exitCode === 0 &&
@@ -134,7 +152,8 @@ export class UnityRunner implements UnityCommandRunner {
           outputLimitExceeded,
           ...(spawnError ? { spawnError } : {}),
         });
-      });
+      };
+      child.once("close", settle);
     });
   }
 }

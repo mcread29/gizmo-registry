@@ -70,6 +70,22 @@ export class GitService {
       .slice(0, maxPromptDiff);
   }
 
+  async stageFile(projectPath: string, path: string): Promise<void> {
+    const rootPath = await this.#root(projectPath);
+    await this.#git(rootPath, ["add", "--", path]);
+  }
+
+  async unstageFile(projectPath: string, path: string): Promise<void> {
+    const rootPath = await this.#root(projectPath);
+    try {
+      await this.#git(rootPath, ["reset", "--quiet", "HEAD", "--", path]);
+    } catch {
+      // An initial repository has no HEAD to reset to. Removing the path from
+      // the index is the equivalent operation in that state.
+      await this.#git(rootPath, ["rm", "--cached", "--quiet", "--", path]);
+    }
+  }
+
   async commitAll(
     projectPath: string,
     message: string,

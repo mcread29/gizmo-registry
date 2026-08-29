@@ -40,6 +40,19 @@ describe("UnityRunner", () => {
     expect(result.signal).toBe("SIGTERM");
   });
 
+  it("returns after forced termination when a descendant keeps stdio open", async () => {
+    const runner = nodeRunner({ timeoutMs: 20, killGraceMs: 20 });
+    const result = await runner.run([
+      "-e",
+      `const { spawn } = require("node:child_process");
+spawn(process.execPath, ["-e", "setTimeout(() => {}, 500)"], { stdio: ["ignore", process.stdout, process.stderr] });
+setInterval(() => {}, 1000);`,
+    ]);
+
+    expect(result.timedOut).toBe(true);
+    expect(result.durationMs).toBeLessThan(300);
+  });
+
   it("cancels a process with an AbortSignal", async () => {
     const runner = nodeRunner();
     const controller = new AbortController();
@@ -65,6 +78,8 @@ describe("UnityRunner", () => {
   });
 });
 
-function nodeRunner(options: { timeoutMs?: number } = {}) {
+function nodeRunner(
+  options: { timeoutMs?: number; killGraceMs?: number } = {},
+) {
   return new UnityRunner({ executable: process.execPath, ...options });
 }

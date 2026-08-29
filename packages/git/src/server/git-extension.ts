@@ -13,7 +13,7 @@ function descriptor(): ExtensionDescriptor {
     name: "Git",
     version: "0.0.0",
     apiVersion,
-    capabilities: ["status", "commit"],
+    capabilities: ["status", "stage", "commit"],
     operations: [
       {
         id: "commit-context",
@@ -21,7 +21,8 @@ function descriptor(): ExtensionDescriptor {
         requiresConfirmation: false,
       },
       { id: "status", mutates: false, requiresConfirmation: false },
-      { id: "diff", mutates: false, requiresConfirmation: false },
+      { id: "stage", mutates: true, requiresConfirmation: false },
+      { id: "unstage", mutates: true, requiresConfirmation: false },
       {
         id: "commit",
         mutates: true,
@@ -46,12 +47,10 @@ export const gizmoExtension: GizmoServerExtension = {
         return service.status(workspacePath, signal);
       case "commit-context":
         return service.commitContext(workspacePath);
-      case "diff": {
-        const file = typeof (input as { file?: unknown } | null)?.file === "string"
-          ? (input as { file: string }).file
-          : "";
-        return service.diff(workspacePath, file, signal);
-      }
+      case "stage":
+        return service.stageFile(workspacePath, filePath(input));
+      case "unstage":
+        return service.unstageFile(workspacePath, filePath(input));
       case "commit": {
         const message =
           typeof (input as { message?: unknown } | null)?.message === "string"
@@ -64,6 +63,13 @@ export const gizmoExtension: GizmoServerExtension = {
     }
   },
 };
+
+function filePath(input: unknown) {
+  const path = (input as { path?: unknown } | null)?.path;
+  if (typeof path !== "string" || !path)
+    throw new Error("File path is required");
+  return path;
+}
 
 async function isInRepository(
   workspacePath: string,
