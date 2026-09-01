@@ -24,6 +24,7 @@ describe("ChangesPanel", () => {
         message: "Update player movement",
       })),
       revertFile: vi.fn(async () => {}),
+      invokeProjectExtension: vi.fn(async () => ({})),
     } satisfies GitHostStore;
 
     const { getAllByText, getByRole, queryByText, unmount } = render(
@@ -79,8 +80,9 @@ describe("ChangesPanel", () => {
       generateCommitMessage,
       commitAll,
       revertFile: vi.fn(async () => {}),
+      invokeProjectExtension: vi.fn(async () => ({})),
     } satisfies GitHostStore;
-    const { findByRole, getByRole, getByText, getByTitle } = render(
+    const { findByRole, getByRole, getByText, getByTitle, unmount } = render(
       ChangesPanel,
       {
         store,
@@ -107,5 +109,55 @@ describe("ChangesPanel", () => {
     );
 
     expect(commitAll).toHaveBeenCalledWith("Polish player movement");
+    unmount();
+  });
+
+  it("opens the commit dialog with an empty message when generation fails", async () => {
+    const generateCommitMessage = vi.fn(async () => {
+      throw new Error("Upstream request failed");
+    });
+    const commitAll = vi.fn(async (message: string) => ({
+      rootPath: "/projects/game",
+      commit: "0123456789abcdef",
+      message,
+    }));
+    const store = {
+      messages: [],
+      gitStatus: {
+        rootPath: "/projects/game",
+        branch: "main",
+        clean: false,
+        files: [{ path: "Player.cs", index: " ", workingTree: "M" }],
+      },
+      gitLoading: false,
+      gitCommitting: false,
+      refreshGitStatus: vi.fn(async () => {}),
+      generateCommitMessage,
+      commitAll,
+      revertFile: vi.fn(async () => {}),
+      invokeProjectExtension: vi.fn(async () => ({})),
+    } satisfies GitHostStore;
+    const { findByRole, getByRole, unmount } = render(ChangesPanel, {
+      store,
+      projectPath: "/projects/game",
+      stageFile: vi.fn(async () => {}),
+      unstageFile: vi.fn(async () => {}),
+    });
+
+    await fireEvent.click(getByRole("button", { name: "Commit all" }));
+
+    const message = await findByRole("textbox", { name: "Commit message" });
+    expect(message).toHaveValue("");
+    expect(generateCommitMessage).toHaveBeenCalledTimes(1);
+
+    await fireEvent.input(message, {
+      target: { value: "Manual commit message" },
+    });
+    const dialog = await findByRole("dialog", { name: "Commit all changes" });
+    await fireEvent.click(
+      dialog.querySelector('button:not([data-variant="ghost"])')!,
+    );
+    expect(commitAll).toHaveBeenCalledWith("Manual commit message");
+    unmount();
   });
 });

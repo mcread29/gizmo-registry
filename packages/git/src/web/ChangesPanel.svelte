@@ -119,6 +119,11 @@
 		if (!collapsedGroups.delete(group)) collapsedGroups.add(group);
 	}
 
+	function stageActionLabel(group: string, updating: boolean) {
+		if (group === 'staged') return updating ? 'Unstaging…' : 'Unstage file';
+		return updating ? 'Staging…' : 'Stage file';
+	}
+
 	async function updateStage(group: string, file: string) {
 		const key = groupKey(group, file);
 		updatingStage = key;
@@ -160,15 +165,18 @@
 		generatingMessage = true;
 		try {
 			commitMessage = await store.generateCommitMessage();
-			commitDialogOpen = true;
 		} catch (error) {
+			// Message generation depends on the session's model provider; an
+			// outage there must not block committing. Offer an empty message.
+			commitMessage = '';
 			toasts.show(
-				error instanceof Error ? error.message : String(error),
+				`Could not generate a commit message (${error instanceof Error ? error.message : String(error)}); write one manually.`,
 				'danger',
 			);
 		} finally {
 			generatingMessage = false;
 		}
+		commitDialogOpen = true;
 	}
 
 	async function refreshGitStatus() {
@@ -361,23 +369,24 @@
 									>
 								{/if}
 							</button>
-							<div data-ui="change-actions">
+							<div data-ui="change-actions" data-kind="stage">
 								<Button
 									variant="ghost"
-									size="sm"
+									size="icon"
 									disabled={updatingStage === key}
+									aria-label={stageActionLabel(
+										group.id,
+										updatingStage === key,
+									)}
+									title={stageActionLabel(
+										group.id,
+										updatingStage === key,
+									)}
 									onclick={() => updateStage(group.id, entry.file)}
 								>
 									{#if group.id === 'staged'}<Minus size={13} />{:else}<Plus
 											size={13}
 										/>{/if}
-									{updatingStage === key
-										? group.id === 'staged'
-											? 'Unstaging…'
-											: 'Staging…'
-										: group.id === 'staged'
-											? 'Unstage file'
-											: 'Stage file'}
 								</Button>
 							</div>
 							{#if authored && expanded.has(key)}
