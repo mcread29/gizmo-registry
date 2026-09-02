@@ -1,7 +1,14 @@
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 
-export const protocolVersion = 25 as const;
+/**
+ * v26: project services are registered per extension id. `project.status`,
+ * `project.open`, and `project.watch` identify both the workspace and the
+ * owning extension, and status payloads are opaque extension-owned data —
+ * core no longer describes any extension's process shape. v25 project
+ * requests (no extensionId) are still accepted for one migration window.
+ */
+export const protocolVersion = 26 as const;
 
 const sessionTitleLimit = 48;
 
@@ -69,6 +76,17 @@ export interface AgentIdentity {
 
 const envelope = {
   protocolVersion: Type.Literal(protocolVersion),
+  requestId: Type.String({ minLength: 1 }),
+};
+
+/**
+ * v25 compatibility: project.status/project.open/project.watch requests from
+ * a v25 client carry no extensionId and are stamped with version 25. Accepted
+ * only for the migration window; remove together with the v25 request
+ * variants below.
+ */
+const v25Envelope = {
+  protocolVersion: Type.Literal(25),
   requestId: Type.String({ minLength: 1 }),
 };
 
@@ -321,32 +339,6 @@ export const agentModelCatalogSchema = Type.Object(
 
 export type AgentModelCatalog = Static<typeof agentModelCatalogSchema>;
 
-const unityCliMessageSchema = Type.Object(
-  {
-    code: Type.String(),
-    message: Type.String(),
-    file: Type.Optional(Type.String()),
-    line: Type.Optional(Type.Integer({ minimum: 1 })),
-    column: Type.Optional(Type.Integer({ minimum: 1 })),
-  },
-  { additionalProperties: false },
-);
-
-export const unityProjectSchema = Type.Object(
-  {
-    title: Type.String({ minLength: 1 }),
-    path: Type.String({ minLength: 1 }),
-    version: Type.Optional(Type.String()),
-    lastModified: Type.Optional(Type.Integer({ minimum: 0 })),
-    isFavorite: Type.Boolean(),
-    buildTarget: Type.Optional(Type.String()),
-    renderPipeline: Type.Optional(Type.String()),
-  },
-  { additionalProperties: false },
-);
-
-export type UnityProject = Static<typeof unityProjectSchema>;
-
 export const projectSkillSchema = Type.Object(
   {
     id: Type.String({ minLength: 1, maxLength: 200 }),
@@ -540,37 +532,6 @@ export type WorkspaceDirectoryListing = Static<
   typeof workspaceDirectoryListingSchema
 >;
 
-export const unityStatusSchema = Type.Object(
-  {
-    state: Type.Union([
-      Type.Literal("connected"),
-      Type.Literal("disconnected"),
-      Type.Literal("unavailable"),
-      Type.Literal("error"),
-    ]),
-    ok: Type.Boolean(),
-    command: Type.Array(Type.String()),
-    exitCode: Type.Union([Type.Integer(), Type.Null()]),
-    durationMs: Type.Integer({ minimum: 0 }),
-    instances: Type.Array(Type.Record(Type.String(), Type.Unknown())),
-    errors: Type.Array(unityCliMessageSchema),
-    warnings: Type.Array(unityCliMessageSchema),
-    stderr: Type.Optional(Type.String()),
-  },
-  { additionalProperties: false },
-);
-
-export type UnityStatus = Static<typeof unityStatusSchema>;
-
-/**
- * Generic wire shape for any extension that declares `hasProjectStatus`.
- * Structurally identical to `UnityStatus` — Unity is simply the extension
- * that happens to populate it today — kept as a distinct export so client
- * code names the capability, not the extension that first implemented it.
- */
-export const projectStatusSchema = unityStatusSchema;
-export type ProjectStatus = UnityStatus;
-
 export const extensionOperationSchema = Type.Object(
   {
     id: Type.String({ minLength: 1, maxLength: 128 }),
@@ -676,30 +637,6 @@ export const gitCommitResultSchema = Type.Object(
 );
 
 export type GitCommitResult = Static<typeof gitCommitResultSchema>;
-
-export const unityOpenProjectResultSchema = Type.Object(
-  {
-    state: Type.Union([
-      Type.Literal("opened"),
-      Type.Literal("already_open"),
-      Type.Literal("error"),
-    ]),
-    ok: Type.Boolean(),
-    command: Type.Array(Type.String()),
-    exitCode: Type.Union([Type.Integer(), Type.Null()]),
-    durationMs: Type.Integer({ minimum: 0 }),
-    data: Type.Unknown(),
-    errors: Type.Array(unityCliMessageSchema),
-    warnings: Type.Array(unityCliMessageSchema),
-    stderr: Type.Optional(Type.String()),
-    status: Type.Optional(unityStatusSchema),
-  },
-  { additionalProperties: false },
-);
-
-export type UnityOpenProjectResult = Static<
-  typeof unityOpenProjectResultSchema
->;
 
 export const providerStatusSchema = Type.Object(
   {
@@ -1190,6 +1127,16 @@ export const agentRequestSchema = Type.Union([
       ...envelope,
       type: Type.Literal("project.status"),
       projectPath: Type.String({ minLength: 1 }),
+      extensionId: Type.String({ minLength: 1, maxLength: 128 }),
+    },
+    { additionalProperties: false },
+  ),
+  /** v25 compatibility: no extensionId, first-available service routing. */
+  Type.Object(
+    {
+      ...v25Envelope,
+      type: Type.Literal("project.status"),
+      projectPath: Type.String({ minLength: 1 }),
     },
     { additionalProperties: false },
   ),
@@ -1199,12 +1146,33 @@ export const agentRequestSchema = Type.Union([
       type: Type.Literal("project.watch"),
       sessionId: Type.String({ minLength: 1 }),
       projectPath: Type.String({ minLength: 1 }),
+      extensionId: Type.String({ minLength: 1, maxLength: 128 }),
+    },
+    { additionalProperties: false },
+  ),
+  /** v25 compatibility: no extensionId, first-available service routing. */
+  Type.Object(
+    {
+      ...v25Envelope,
+      type: Type.Literal("project.watch"),
+      sessionId: Type.String({ minLength: 1 }),
+      projectPath: Type.String({ minLength: 1 }),
     },
     { additionalProperties: false },
   ),
   Type.Object(
     {
       ...envelope,
+      type: Type.Literal("project.open"),
+      projectPath: Type.String({ minLength: 1 }),
+      extensionId: Type.String({ minLength: 1, maxLength: 128 }),
+    },
+    { additionalProperties: false },
+  ),
+  /** v25 compatibility: no extensionId, first-available service routing. */
+  Type.Object(
+    {
+      ...v25Envelope,
       type: Type.Literal("project.open"),
       projectPath: Type.String({ minLength: 1 }),
     },
@@ -1522,7 +1490,10 @@ export const agentEventSchema = Type.Union([
       ...eventEnvelope,
       type: Type.Literal("project.status.changed"),
       projectPath: Type.String({ minLength: 1 }),
-      status: unityStatusSchema,
+      /** Which extension's project service produced this status. */
+      extensionId: Type.String({ minLength: 1, maxLength: 128 }),
+      /** Opaque extension-owned payload; consumers validate their own shape. */
+      status: Type.Unknown(),
     },
     { additionalProperties: false },
   ),
@@ -1654,14 +1625,6 @@ export function parseAgentEvent(input: unknown): AgentEvent {
   return input;
 }
 
-export function parseUnityProjects(input: unknown): UnityProject[] {
-  const schema = Type.Array(unityProjectSchema);
-  if (!Value.Check(schema, input)) {
-    throw new ProtocolValidationError("response", input);
-  }
-  return input;
-}
-
 export function parseStoredProjects(input: unknown): StoredProject[] {
   const schema = Type.Array(storedProjectSchema);
   if (!Value.Check(schema, input)) {
@@ -1732,30 +1695,6 @@ export function parseComposerCommands(input: unknown): ComposerCommand[] {
 
 export function parseAgentModelCatalog(input: unknown): AgentModelCatalog {
   if (!Value.Check(agentModelCatalogSchema, input)) {
-    throw new ProtocolValidationError("response", input);
-  }
-  return input;
-}
-
-export function parseUnityStatus(input: unknown): UnityStatus {
-  if (!Value.Check(unityStatusSchema, input)) {
-    throw new ProtocolValidationError("response", input);
-  }
-  return input;
-}
-
-/** Generic counterpart to {@link parseUnityStatus} for the `ProjectStatus` wire shape. */
-export function parseProjectStatus(input: unknown): ProjectStatus {
-  if (!Value.Check(projectStatusSchema, input)) {
-    throw new ProtocolValidationError("response", input);
-  }
-  return input;
-}
-
-export function parseUnityOpenProjectResult(
-  input: unknown,
-): UnityOpenProjectResult {
-  if (!Value.Check(unityOpenProjectResultSchema, input)) {
     throw new ProtocolValidationError("response", input);
   }
   return input;

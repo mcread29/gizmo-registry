@@ -26,6 +26,7 @@
 	} from '@gizmo/ui';
 	import { changeTree, changeTreeRows } from './change-tree';
 	import { threadChanges } from './thread-changes';
+	import './git.css';
 
 	interface Props {
 		store: GitHostStore;

@@ -7,7 +7,7 @@ export const unityWebExtension = {
   id: "unity",
   dialog: unityDomainPlugin.dialog,
   settings: unityDomainPlugin.settings,
-  createView: unityDomainPlugin.createView,
+  inspectorTabs: unityDomainPlugin.inspectorTabs,
   commands: unityDomainPlugin.commands,
   hasProjectStatus: unityDomainPlugin.hasProjectStatus,
   apiVersion: unityExtension.apiVersion,

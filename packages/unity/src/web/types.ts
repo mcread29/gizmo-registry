@@ -16,8 +16,5 @@ export interface StoredProject {
   path: string;
 }
 
-export interface UnityStatus {
-  state: "connected" | "disconnected" | "unavailable" | "error";
-  instances: Record<string, unknown>[];
-  errors: Array<{ message: string }>;
-}
+/** The full wire shape is owned by the extension; see `unity-wire.ts`. */
+export type { UnityStatus } from "./unity-wire";

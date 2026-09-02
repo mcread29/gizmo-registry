@@ -31,6 +31,21 @@
       "id": "unity",
       "name": "Unity",
       "description": "Unity tools, project services, console, and editor integration"
+    },
+    {
+      "id": "search-and-scrape",
+      "name": "Search & Scrape",
+      "description": "SearXNG web search and Crawl4AI page scraping with native result cards"
+    },
+    {
+      "id": "subagents",
+      "name": "Subagents",
+      "description": "Spawn, inspect, and steer background subagents with a live panel"
+    },
+    {
+      "id": "workflows",
+      "name": "Workflows",
+      "description": "Multi-agent workflow orchestration with live run inspection"
     }
   ]
 }

@@ -1,24 +1,18 @@
-/** Status of the external tool a project extension runs, in whatever terms that tool uses. */
-export interface ProjectStatus {
-  state: string;
-  ok: boolean;
-  command: readonly string[];
-  exitCode: number | null;
-  durationMs: number;
-  instances: readonly unknown[];
-  errors: readonly unknown[];
-  warnings: readonly unknown[];
-  stderr?: string;
-}
+/**
+ * Status of the external tool a project extension runs. Opaque to Gizmo
+ * core: the extension owns the payload's shape, validation, and errors, and
+ * consumers on the wire validate whichever extension's data they render.
+ */
+export type ProjectStatus = unknown;
 
 export interface ProjectWatchListeners {
   status: (status: ProjectStatus) => void;
 }
 
 /**
- * An extension's runtime project (open/status/watch/revert). Gizmo core only
- * ever holds one of these behind the interface; it never knows which
- * extension it is.
+ * An extension's runtime project operations (status/watch/open/revert).
+ * Gizmo core registers one of these per extension id and routes every
+ * request to the owning extension's service; it never interprets payloads.
  */
 export interface ProjectService {
   getStatus(projectPath: string): Promise<ProjectStatus>;
@@ -32,65 +26,37 @@ export interface ProjectService {
 }
 
 /**
- * Fans project operations out to every extension that provides a
- * ProjectService, trying each until one handles the path. Keeps
- * `server.ts` from hardcoding "first extension wins" — a second
- * runtime extension (e.g. a future non-Unity one) is reachable
- * without editing core.
+ * Holds one ProjectService per extension id. Requests name the extension
+ * they belong to and are routed directly; there is no fallback order and no
+ * implicit "first service wins" routing.
  */
-export class CompositeProjectService implements ProjectService {
-  readonly #services: readonly ProjectService[];
+export class ProjectServiceRegistry {
+  readonly #services: ReadonlyMap<string, ProjectService>;
 
-  constructor(services: readonly ProjectService[]) {
-    this.#services = services;
+  constructor(entries: Iterable<readonly [string, ProjectService]>) {
+    this.#services = new Map(entries);
   }
 
-  async getStatus(projectPath: string): Promise<ProjectStatus> {
-    return this.#first((service) => service.getStatus(projectPath));
+  get ids(): readonly string[] {
+    return [...this.#services.keys()];
   }
 
-  async watchStatus(
-    projectPath: string,
-    listeners: ProjectWatchListeners,
-  ): Promise<ProjectStatus> {
-    return this.#first((service) =>
-      service.watchStatus(projectPath, listeners),
-    );
+  /** Registration order preserved; used only by v25 compatibility routing. */
+  get entries(): readonly (readonly [string, ProjectService])[] {
+    return [...this.#services.entries()];
   }
 
-  async openProject(projectPath: string): Promise<unknown> {
-    return this.#first((service) => service.openProject(projectPath));
-  }
-
-  async revertFile(
-    projectPath: string,
-    file: string,
-    patch: string,
-  ): Promise<void> {
-    return this.#first((service) =>
-      service.revertFile(projectPath, file, patch),
-    );
+  serviceFor(extensionId: string): ProjectService | undefined {
+    return this.#services.get(extensionId);
   }
 
   dispose(): void {
-    for (const service of this.#services) {
+    for (const service of this.#services.values()) {
       try {
         service.dispose();
       } catch {
         // One service failing to dispose must not prevent the rest.
       }
     }
-  }
-
-  async #first<T>(call: (service: ProjectService) => Promise<T>): Promise<T> {
-    let lastError: unknown;
-    for (const service of this.#services) {
-      try {
-        return await call(service);
-      } catch (error) {
-        lastError = error;
-      }
-    }
-    throw lastError ?? new Error("No project service is configured");
   }
 }

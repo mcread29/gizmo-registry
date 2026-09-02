@@ -16,7 +16,7 @@
  * Usage: bun scripts/build-web-extension.ts <package-dir> [--out <file>]
  */
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { build, type Plugin } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 
@@ -110,17 +110,47 @@ export async function buildWebExtension(
     },
   });
   const outputs = Array.isArray(result) ? result : [result];
-  const chunks = outputs
-    .flatMap((bundle) => ("output" in bundle ? bundle.output : []))
-    .filter((entry) => entry.type === "chunk");
+  const entries = outputs.flatMap((bundle) =>
+    "output" in bundle ? bundle.output : [],
+  );
+  const chunks = entries.filter((entry) => entry.type === "chunk");
   if (chunks.length !== 1) {
     throw new Error(
       `Expected one output chunk for ${packageDir}, got ${chunks.length}`,
     );
   }
+
+  // Vite extracts component CSS into assets for library builds. Extensions are
+  // installed as one runtime-imported JavaScript file, so leaving those assets
+  // behind silently drops their styles. Install the emitted CSS once when the
+  // module loads instead.
+  const css = entries
+    .flatMap((entry) => {
+      if (entry.type !== "asset" || !entry.fileName.endsWith(".css")) return [];
+      return [
+        typeof entry.source === "string"
+          ? entry.source
+          : Buffer.from(entry.source).toString("utf8"),
+      ];
+    })
+    .join("\n");
+  const styleKey = basename(root);
+  const styleSelector = `style[data-gizmo-extension-style=${JSON.stringify(styleKey)}]`;
+  const installStyles = css
+    ? [
+        `const __gizmoStyleSelector = ${JSON.stringify(styleSelector)};`,
+        `if (typeof document !== "undefined") {`,
+        `  const style = document.querySelector(__gizmoStyleSelector) ?? document.createElement("style");`,
+        `  style.dataset.gizmoExtensionStyle = ${JSON.stringify(styleKey)};`,
+        `  style.textContent = ${JSON.stringify(css)};`,
+        `  if (!style.isConnected) document.head.append(style);`,
+        `}`,
+      ].join("\n")
+    : "";
+
   const target = resolve(outFile);
   await mkdir(dirname(target), { recursive: true });
-  await writeFile(target, chunks[0]!.code, "utf8");
+  await writeFile(target, `${installStyles}\n${chunks[0]!.code}`, "utf8");
   return target;
 }
 

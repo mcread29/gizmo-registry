@@ -187,8 +187,46 @@ describe("agent protocol validation", () => {
         type: "project.watch",
         sessionId: "session-1",
         projectPath: "/projects/game",
+        extensionId: "unity",
       }),
-    ).toMatchObject({ type: "project.watch" });
+    ).toMatchObject({ type: "project.watch", extensionId: "unity" });
+    expect(
+      parseAgentRequest({
+        protocolVersion,
+        requestId: "request-status",
+        type: "project.status",
+        projectPath: "/projects/game",
+        extensionId: "unity",
+      }),
+    ).toMatchObject({ type: "project.status", extensionId: "unity" });
+    expect(
+      parseAgentRequest({
+        protocolVersion,
+        requestId: "request-open",
+        type: "project.open",
+        projectPath: "/projects/game",
+        extensionId: "unity",
+      }),
+    ).toMatchObject({ type: "project.open", extensionId: "unity" });
+    // v25 compatibility: project requests without an extension id are
+    // accepted (first-available routing) for one migration window.
+    expect(
+      parseAgentRequest({
+        protocolVersion: 25,
+        requestId: "request-status-legacy",
+        type: "project.status",
+        projectPath: "/projects/game",
+      }),
+    ).toMatchObject({ type: "project.status" });
+    expect(() =>
+      parseAgentRequest({
+        // A v26 client may not omit the extension id.
+        protocolVersion,
+        requestId: "request-status-missing-id",
+        type: "project.status",
+        projectPath: "/projects/game",
+      }),
+    ).toThrow(ProtocolValidationError);
     expect(
       parseAgentEvent({
         protocolVersion,
@@ -196,18 +234,11 @@ describe("agent protocol validation", () => {
         sessionId: "session-1",
         type: "project.status.changed",
         projectPath: "/projects/game",
-        status: {
-          state: "disconnected",
-          ok: true,
-          command: ["unity", "status"],
-          exitCode: 0,
-          durationMs: 1,
-          instances: [],
-          errors: [],
-          warnings: [],
-        },
+        extensionId: "unity",
+        // Status payloads are opaque extension-owned data in core.
+        status: { whatever: "the extension sent", nested: [1, 2] },
       }),
-    ).toMatchObject({ type: "project.status.changed" });
+    ).toMatchObject({ type: "project.status.changed", extensionId: "unity" });
   });
 
   it("validates model catalogs and model-selection requests", () => {

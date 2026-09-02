@@ -3,6 +3,7 @@
 	import { commandName } from './unity-view';
 	import UnityScriptResult from './UnityScriptResult.svelte';
 	import UnityTestResults from './UnityTestResults.svelte';
+	import './tool-results.css';
 
 	interface Props {
 		tool: ToolCallView;

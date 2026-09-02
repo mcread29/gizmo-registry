@@ -18,17 +18,12 @@ export interface ExtensionContext {
   confirm(kind: string): Promise<boolean>;
 }
 
-export interface ProjectStatus {
-  state: string;
-  ok: boolean;
-  command: readonly string[];
-  exitCode: number | null;
-  durationMs: number;
-  instances: readonly unknown[];
-  errors: readonly unknown[];
-  warnings: readonly unknown[];
-  stderr?: string;
-}
+/**
+ * Opaque to Gizmo core: since protocol v26 the shell stores and routes
+ * project-service status payloads without interpreting them; Unity owns
+ * the shape, validation, and errors (see `src/web/unity-wire.ts`).
+ */
+export type ProjectStatus = unknown;
 
 export interface ProjectWatchListeners {
   status: (status: ProjectStatus) => void;

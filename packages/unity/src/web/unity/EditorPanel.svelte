@@ -104,7 +104,7 @@
 			</dl>
 		{:else}
 			<p data-ui="inspector-message">
-				{store.projectError ??
+				{store.projectServiceErrors.unity ??
 					view.status?.errors[0]?.message ??
 					'The selected project Editor is not open.'}
 			</p>
@@ -112,9 +112,9 @@
 				<Button
 					variant="primary"
 					size="sm"
-					disabled={store.projectOpening}
+					disabled={store.projectOpening.unity}
 					onclick={onOpenProject}
-					><FolderOpen size={14} />{store.projectOpening
+					><FolderOpen size={14} />{store.projectOpening.unity
 						? 'Opening Editor…'
 						: 'Open Editor'}</Button
 				>

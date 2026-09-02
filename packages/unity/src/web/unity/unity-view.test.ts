@@ -1,4 +1,4 @@
-import type { ToolCallView, UnityStatus } from "@gizmo/protocol";
+import type { ToolCallView, UnityStatus } from "../types";
 import { describe, expect, it } from "vitest";
 import { createUnityView } from "./unity-view";
 

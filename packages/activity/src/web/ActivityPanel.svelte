@@ -6,6 +6,7 @@
 	import { CircleCheck, CircleDashed, CircleX, Terminal } from '@lucide/svelte';
 	import { get } from 'svelte/store';
 	import type { ToolCallView } from '@gizmo/protocol';
+	import './activity.css';
 
 	let { view }: { view: { toolActivity: ToolCallView[] } } = $props();
 	let viewport = $state<HTMLDivElement | null>(null);

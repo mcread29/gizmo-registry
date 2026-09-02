@@ -1,7 +1,7 @@
 import { protocolVersion } from "@gizmo/protocol";
 import { fireEvent, render } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
-import type { UnityHost, UnityLayout } from "../host";
+import type { UnityHost, UnitySettings } from "../host";
 import CompileConfirmationDialog from "./CompileConfirmationDialog.svelte";
 
 describe("CompileConfirmationDialog", () => {
@@ -20,12 +20,15 @@ describe("CompileConfirmationDialog", () => {
       pendingConfirmations: [confirmation],
       resolveConfirmation,
     } as unknown as UnityHost;
-    const layout: UnityLayout = { compilePlayModePolicy: "ask" };
-    const { findByRole } = render(CompileConfirmationDialog, { store, layout });
+    const { context, settings } = unitySettings("ask");
+    const { findByRole } = render(CompileConfirmationDialog, {
+      store,
+      settings: context,
+    });
 
     await fireEvent.click(await findByRole("button", { name: "Keep playing" }));
 
-    expect(layout.compilePlayModePolicy).toBe("keep_playing");
+    expect(settings.compilePlayModePolicy).toBe("keep_playing");
     expect(resolveConfirmation).toHaveBeenCalledWith(confirmation, false);
   });
 
@@ -44,10 +47,10 @@ describe("CompileConfirmationDialog", () => {
       pendingConfirmations: [confirmation],
       resolveConfirmation,
     } as unknown as UnityHost;
-    const layout: UnityLayout = { compilePlayModePolicy: "stop" };
+    const { context } = unitySettings("stop");
     const { queryByRole } = render(CompileConfirmationDialog, {
       store,
-      layout,
+      settings: context,
     });
 
     await vi.waitFor(() =>
@@ -58,3 +61,14 @@ describe("CompileConfirmationDialog", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+function unitySettings(compilePlayModePolicy: string) {
+  const settings: Record<string, unknown> = { compilePlayModePolicy };
+  const context: UnitySettings = {
+    get: (key) => settings[key],
+    set: (key, value) => {
+      settings[key] = value;
+    },
+  };
+  return { context, settings };
+}

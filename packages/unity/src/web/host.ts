@@ -1,8 +1,10 @@
 import type { Component } from "svelte";
 
 export interface UnityHost {
-  projectOpening: boolean;
-  projectError?: string;
+  /** Per-extension open-in-progress flags; Unity reads `unity`. */
+  projectOpening: Record<string, boolean>;
+  /** Per-extension project-service errors; Unity reads `unity`. */
+  projectServiceErrors: Record<string, string>;
   pendingConfirmations: PendingConfirmation[];
   resolveConfirmation(
     confirmation: PendingConfirmation,
@@ -14,8 +16,9 @@ export interface PendingConfirmation {
   confirmationId: string;
 }
 
-export interface UnityLayout {
-  compilePlayModePolicy: "ask" | "stop" | "keep_playing";
+export interface UnitySettings {
+  get(key: string): unknown;
+  set(key: string, value: unknown): void;
 }
 
 export interface InspectorTabContribution {
