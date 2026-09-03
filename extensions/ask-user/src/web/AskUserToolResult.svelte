@@ -47,7 +47,7 @@
 <div data-ui="ask-user-result">
 	<p data-ui="ask-user-question">{question}</p>
 	<ul data-ui="ask-user-options">
-		{#each options as option, i (option)}
+		{#each options as option, i (i)}
 			<li
 				data-selected={answer === option || index === i + 1 ? true : undefined}
 			>

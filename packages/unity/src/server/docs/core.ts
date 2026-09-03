@@ -10,6 +10,7 @@ import {
   join,
   relative,
   resolve,
+  sep,
 } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { CORE_STAGES, pageUrl } from "./core-manifest.ts";
@@ -129,6 +130,17 @@ function expandHome(path: string) {
   if (path === "~") return homedir();
   if (path.startsWith("~/")) return join(homedir(), path.slice(2));
   return path;
+}
+
+/** True when `path` is strictly inside `dir`, on every platform's separator. */
+export function isInsideDirectory(dir: string, path: string) {
+  const rel = relative(resolve(dir), resolve(path));
+  return (
+    rel.length > 0 &&
+    rel !== ".." &&
+    !rel.startsWith(`..${sep}`) &&
+    !isAbsolute(rel)
+  );
 }
 
 export function readUnityProjectInfo(cwd: string): UnityProjectInfo {
@@ -457,10 +469,7 @@ function readTargetedCoreRoots(info: UnityProjectInfo) {
         if (page.file !== expectedFile)
           throw new Error("Core page filename does not match its URL.");
         const path = resolve(dirname(manifestPath), page.file);
-        if (
-          !path.startsWith(`${resolve(dirname(manifestPath))}/`) ||
-          !existsSync(path)
-        )
+        if (!isInsideDirectory(dirname(manifestPath), path) || !existsSync(path))
           throw new Error(
             "Core page file is missing or outside its stage directory.",
           );

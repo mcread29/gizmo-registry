@@ -12,8 +12,17 @@ import { join } from "node:path";
  */
 export function resolveAgentDir(): string {
   const fromEnv = process.env.PI_CODING_AGENT_DIR;
-  if (fromEnv) return fromEnv;
+  if (fromEnv) return expandHome(fromEnv);
   return join(homedir(), ".pi", "agent");
+}
+
+/** Pi expands a leading `~` in PI_CODING_AGENT_DIR; both sides must agree. */
+export function expandHome(path: string): string {
+  if (path === "~") return homedir();
+  if (path.startsWith("~/") || path.startsWith("~\\")) {
+    return join(homedir(), path.slice(2));
+  }
+  return path;
 }
 
 /** Directory where the subagents extension writes per-session state files. */

@@ -9,7 +9,7 @@
 	let expandedId = $state<string>();
 
 	function toggle(sub: SubagentEntry) {
-		expandedId = expandedId === sub.id ? undefined : sub.id;
+		expandedId = expandedId === sub.key ? undefined : sub.key;
 	}
 
 	function elapsed(sub: SubagentEntry): string {
@@ -52,8 +52,8 @@
 		</div>
 	{:else}
 		<ul data-ui="subagents-list">
-			{#each runtime.subagents as sub (sub.id)}
-				<li data-status={sub.status} data-selected={expandedId === sub.id || undefined}>
+			{#each runtime.subagents as sub (sub.key)}
+				<li data-status={sub.status} data-selected={expandedId === sub.key || undefined}>
 					<button type="button" onclick={() => toggle(sub)}>
 						<span data-ui="subagent-title">
 							<code>{sub.id}</code>
@@ -65,7 +65,7 @@
 							<span>{elapsed(sub)}</span>
 						</span>
 					</button>
-					{#if expandedId === sub.id}
+					{#if expandedId === sub.key}
 						<div data-ui="subagent-detail">
 							<dl>
 								{#if sub.model}<div><dt>Model</dt><dd>{sub.model}</dd></div>{/if}

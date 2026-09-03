@@ -1,21 +1,12 @@
 import type { Component } from "svelte";
 
-export interface ToolCallView {
-  id: string;
-  name: string;
-  status: "running" | "complete" | "error";
-  statusText: string;
-  input?: unknown;
-  result?: unknown;
-}
-
+/** Mirrors the app's `ExtensionContext`; kept local so the bundle never imports the app. */
 export interface ExtensionContext {
   projectPath: string;
-  /** The open thread, read live; changes without re-activation. */
-  readonly sessionId?: string;
   invoke(operation: string, input?: unknown): Promise<unknown>;
 }
 
+/** Mirrors the app's `InspectorTabContribution`. */
 export interface InspectorTabContribution {
   id: string;
   label: string;
@@ -26,13 +17,8 @@ export interface InspectorTabContribution {
   props: Record<string, unknown>;
 }
 
+/** Mirrors the app's `WebExtensionRuntime`. */
 export interface WebExtensionRuntime {
   readonly inspectorTabs: InspectorTabContribution[];
   dispose(): void;
-}
-
-export interface WebExtensionDefinition {
-  id: string;
-  apiVersion: number;
-  activate(descriptor: unknown, context: ExtensionContext): WebExtensionRuntime;
 }

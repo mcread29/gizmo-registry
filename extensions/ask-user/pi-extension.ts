@@ -123,6 +123,17 @@ export default function askUser(pi: ExtensionAPI) {
           `ask_user requires between ${MIN_OPTIONS} and ${MAX_OPTIONS} options (got ${params.options.length}). Retry with a valid number of options.`,
         );
       }
+      // Answers are reported by label, so two identical labels would be
+      // indistinguishable (and the web card keys its list on them).
+      const labels = params.options.map((option) => option.label.trim());
+      const duplicate = labels.find(
+        (label, index) => labels.indexOf(label) !== index,
+      );
+      if (duplicate !== undefined) {
+        throw new Error(
+          `ask_user option labels must be distinct (duplicate: "${duplicate}"). Retry with unique labels.`,
+        );
+      }
 
       if (signal?.aborted) {
         return reply("Cancelled");

@@ -37,6 +37,12 @@ function descriptor(): ExtensionDescriptor {
   };
 }
 
+function sessionIdOf(input: unknown): string | undefined {
+  if (typeof input !== "object" || input === null) return undefined;
+  const { sessionId } = input as { sessionId?: unknown };
+  return typeof sessionId === "string" && sessionId ? sessionId : undefined;
+}
+
 export const gizmoExtension = {
   id: "subagents",
   name: "Subagents",
@@ -44,9 +50,10 @@ export const gizmoExtension = {
     return [descriptor()];
   },
   async invoke(
-    _workspacePath: string,
+    workspacePath: string,
     extensionId: string,
     operationId: string,
+    input?: unknown,
   ): Promise<unknown> {
     if (extensionId !== "subagents") {
       throw new Error(`Extension is not installed: ${extensionId}`);
@@ -56,6 +63,12 @@ export const gizmoExtension = {
         `Extension subagents does not expose operation: ${operationId}`,
       );
     }
-    return readMergedSubagentState();
+    // Scoped to the workspace and, when the panel says which, the open
+    // thread; other threads keep their own subagents to themselves.
+    const sessionId = sessionIdOf(input);
+    return readMergedSubagentState({
+      workspacePath,
+      ...(sessionId !== undefined ? { sessionId } : {}),
+    });
   },
 };

@@ -10,7 +10,7 @@
  */
 
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   readJsonFile,
   subagentStateDir,
@@ -35,10 +35,41 @@ export interface SubagentStateEntry {
   promptPreview?: string;
 }
 
+/**
+ * One entry as served to the web UI. Subagent ids (`sa-1`, `sa-2`, ...) are
+ * only unique within their parent session, so the merged view carries the
+ * session and a globally unique key.
+ */
+export interface MergedSubagentEntry extends SubagentStateEntry {
+  sessionId: string;
+  /** `${sessionId}:${id}` — unique across every session in the snapshot. */
+  key: string;
+}
+
 export interface SubagentStateFile {
   sessionId: string;
   updatedAt: number;
   subagents: SubagentStateEntry[];
+  /** Parent session's working directory (the Gizmo workspace). */
+  workspacePath?: string;
+  /** Process that wrote the file; a dead pid means the session is gone. */
+  pid?: number;
+}
+
+export interface WriteSubagentStateOptions {
+  agentDir?: string;
+  workspacePath?: string;
+  pid?: number;
+}
+
+export interface ReadMergedOptions {
+  agentDir?: string;
+  /** Only sessions rooted in this workspace; omit for every workspace. */
+  workspacePath?: string;
+  /** Only this parent session (the open thread); omit for every session. */
+  sessionId?: string;
+  /** Override for tests; defaults to a real liveness probe. */
+  isProcessAlive?: (pid: number) => boolean;
 }
 
 const OUTPUT_PREVIEW_BYTES = 2_048;
@@ -76,14 +107,68 @@ export function readAllSubagentStates(agentDir?: string): SubagentStateFile[] {
   return states.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-/** Merged, newest-first view across every session that reported state. */
-export function readMergedSubagentState(agentDir?: string): {
+export function defaultIsProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM means the process exists but belongs to someone else.
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** Case-insensitive on Windows, where the same workspace can be spelled two ways. */
+export function sameWorkspace(a: string, b: string): boolean {
+  const normalize = (value: string) => {
+    const resolved = resolve(value).replace(/[\\/]+$/, "");
+    return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  };
+  return normalize(a) === normalize(b);
+}
+
+/**
+ * Merged, newest-first view across every live session that reported state.
+ *
+ * A file whose writer process is gone belongs to a session that ended
+ * without cleaning up (a crash, a killed server); it is dropped from the
+ * view and removed from disk. Files that predate `pid` tracking are treated
+ * the same way, since nothing can vouch for them.
+ */
+export function readMergedSubagentState(options: ReadMergedOptions = {}): {
   updatedAt: number;
-  subagents: SubagentStateEntry[];
+  subagents: MergedSubagentEntry[];
 } {
-  const states = readAllSubagentStates(agentDir);
+  const isAlive = options.isProcessAlive ?? defaultIsProcessAlive;
+  const states = readAllSubagentStates(options.agentDir).filter((state) => {
+    if (state.pid === undefined || !isAlive(state.pid)) {
+      try {
+        rmSync(stateFilePath(state.sessionId, options.agentDir), {
+          force: true,
+        });
+      } catch {
+        // Best-effort cleanup.
+      }
+      return false;
+    }
+    if (
+      options.sessionId !== undefined &&
+      state.sessionId !== options.sessionId
+    )
+      return false;
+    if (options.workspacePath === undefined) return true;
+    // Legacy files carry no workspace; keep them visible rather than hide
+    // work the user knows is running.
+    if (state.workspacePath === undefined) return true;
+    return sameWorkspace(state.workspacePath, options.workspacePath);
+  });
   const merged = states
-    .flatMap((state) => state.subagents)
+    .flatMap((state) =>
+      state.subagents.map((entry) => ({
+        ...entry,
+        sessionId: state.sessionId,
+        key: `${state.sessionId}:${entry.id}`,
+      })),
+    )
     .sort((a, b) => b.startedAt - a.startedAt);
   const updatedAt = states.reduce(
     (latest, state) => Math.max(latest, state.updatedAt),
@@ -98,7 +183,10 @@ function isStateFile(value: unknown): value is SubagentStateFile {
   return (
     typeof candidate.sessionId === "string" &&
     typeof candidate.updatedAt === "number" &&
-    Array.isArray(candidate.subagents)
+    Array.isArray(candidate.subagents) &&
+    (candidate.workspacePath === undefined ||
+      typeof candidate.workspacePath === "string") &&
+    (candidate.pid === undefined || typeof candidate.pid === "number")
   );
 }
 
@@ -109,10 +197,10 @@ function isStateFile(value: unknown): value is SubagentStateFile {
 export function writeSubagentState(
   sessionId: string,
   subagents: SubagentStateEntry[],
-  agentDir?: string,
+  options: WriteSubagentStateOptions = {},
 ): void {
-  const dir = subagentStateDir(agentDir);
-  const path = stateFilePath(sessionId, agentDir);
+  const dir = subagentStateDir(options.agentDir);
+  const path = stateFilePath(sessionId, options.agentDir);
   if (subagents.length === 0) {
     try {
       rmSync(path, { force: true });
@@ -125,6 +213,10 @@ export function writeSubagentState(
     sessionId,
     updatedAt: Date.now(),
     subagents,
+    ...(options.workspacePath !== undefined
+      ? { workspacePath: options.workspacePath }
+      : {}),
+    pid: options.pid ?? process.pid,
   };
   try {
     mkdirSync(dir, { recursive: true });

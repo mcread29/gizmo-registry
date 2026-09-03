@@ -25,6 +25,7 @@
 		sourceHref,
 	} from '@gizmo/ui';
 	import { changeTree, changeTreeRows } from './change-tree';
+	import { changeKey, gitPathToProjectPath } from './change-paths';
 	import { threadChanges } from './thread-changes';
 	import './git.css';
 
@@ -43,7 +44,7 @@
 	);
 	let statuses = $derived(store.gitStatus?.files ?? []);
 	let statusByPath = $derived(
-		new Map(statuses.map((status) => [normalize(status.path), status])),
+		new Map(statuses.map((status) => [normalize(projectFile(status)), status])),
 	);
 	let files = $derived(filesFor(statuses));
 	const collapsedFolders = new SvelteSet<string>();
@@ -95,11 +96,21 @@
 
 	function filesFor(groupStatuses: GitFileStatus[]) {
 		return groupStatuses.map((status) => {
-			const authored = agentFilesByPath.get(normalize(status.path));
+			const file = projectFile(status);
+			const authored = agentFilesByPath.get(normalize(file));
 			return authored
-				? { ...authored, file: status.path }
-				: { file: status.path, changes: [], added: 0, removed: 0 };
+				? { ...authored, file }
+				: { file, changes: [], added: 0, removed: 0 };
 		});
+	}
+
+	/** Git reports repository-root-relative paths; the panel works workspace-relative. */
+	function projectFile(status: GitFileStatus) {
+		return gitPathToProjectPath(
+			status.path,
+			store.gitStatus?.rootPath,
+			projectPath,
+		);
 	}
 
 	function groupKey(group: string, path: string) {
@@ -205,11 +216,7 @@
 	}
 
 	function normalize(path: string) {
-		const normalized = path.replaceAll('\\', '/').replace(/^\.\//, '');
-		const workspace = projectPath?.replaceAll('\\', '/').replace(/\/$/, '');
-		return workspace && normalized.startsWith(`${workspace}/`)
-			? normalized.slice(workspace.length + 1)
-			: normalized;
+		return changeKey(path, projectPath);
 	}
 
 	function code(status: GitFileStatus, group: string) {
@@ -319,7 +326,7 @@
 				<strong>{group.label} ({group.statuses.length})</strong>
 			</button>
 			{#if !collapsedGroups.has(group.id)}
-				{#each group.rows as row (row.node.path)}
+				{#each group.rows as row (`${row.node.kind}:${row.node.path}`)}
 					{#if row.node.kind === 'folder'}
 						<button
 							type="button"
@@ -383,7 +390,8 @@
 										group.id,
 										updatingStage === key,
 									)}
-									onclick={() => updateStage(group.id, entry.file)}
+									onclick={() =>
+										updateStage(group.id, status?.path ?? entry.file)}
 								>
 									{#if group.id === 'staged'}<Minus size={13} />{:else}<Plus
 											size={13}

@@ -230,7 +230,9 @@ export default function (pi: ExtensionAPI) {
       stateWriteTimer = undefined;
       const sessionId = sessionContext?.sessionManager.getSessionId();
       if (!sessionId) return;
-      writeSubagentState(sessionId, manager.list().map(toStateEntry));
+      writeSubagentState(sessionId, manager.list().map(toStateEntry), {
+        workspacePath: sessionContext?.cwd,
+      });
     }, 250);
   };
 

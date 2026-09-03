@@ -210,6 +210,29 @@ function acknowledgement(
   };
 }
 
+/**
+ * Open views per extension API, closed together on session shutdown. One
+ * hook per `pi` instance: `pi.on` has no unsubscribe, so registering a
+ * handler per view would retain every closed view's payload for the life of
+ * the session.
+ */
+const openViews = new WeakMap<ExtensionAPI, Set<() => void>>();
+
+function registerForShutdown(pi: ExtensionAPI, close: () => void) {
+  let views = openViews.get(pi);
+  if (!views) {
+    views = new Set();
+    openViews.set(pi, views);
+    const registered = views;
+    pi.on("session_shutdown", () => {
+      for (const view of [...registered]) view();
+      registered.clear();
+    });
+  }
+  views.add(close);
+  return () => views.delete(close);
+}
+
 export function createDeclarativeView(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
@@ -245,6 +268,7 @@ export function createDeclarativeView(
   let timer: ReturnType<typeof setTimeout> | undefined;
   let lastPublishedAt = 0;
   let closed = false;
+  let forgetOnShutdown: (() => void) | undefined;
 
   function publish(update: DeclarativeViewUpdate) {
     if (closed) return;
@@ -450,6 +474,7 @@ export function createDeclarativeView(
   function close() {
     if (closed) return;
     closed = true;
+    forgetOnShutdown?.();
     if (timer) clearTimeout(timer);
     timer = undefined;
     queued = undefined;
@@ -467,7 +492,7 @@ export function createDeclarativeView(
     ]);
   }
 
-  pi.on("session_shutdown", close);
+  forgetOnShutdown = registerForShutdown(pi, close);
 
   return {
     update: schedule,

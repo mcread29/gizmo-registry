@@ -8,7 +8,7 @@
  */
 
 import { readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   readJsonFile,
   workflowRunsDir,
@@ -55,6 +55,8 @@ interface AgentShape {
 interface WorkflowShape {
   runId?: string;
   sessionId?: string;
+  cwd?: string;
+  updatedAt?: number;
   name?: string;
   description?: string;
   background?: boolean;
@@ -86,6 +88,11 @@ const OPERATIONS = [
 
 /** Run ids are `wf_` + hex from the tool; enforce that before path joins. */
 const RUN_ID_PATTERN = /^wf_[A-Za-z0-9]+$/;
+/**
+ * A running workflow refreshes workflow.json every few seconds; one that has
+ * gone this long without a heartbeat belongs to a Pi process that died.
+ */
+const STALE_RUN_MS = 60_000;
 const TRANSCRIPT_MAX_ENTRIES = 400;
 const TRANSCRIPT_TEXT_MAX = 8 * 1024;
 
@@ -113,6 +120,39 @@ function readWorkflow(runId: string, agentDir?: string): WorkflowShape {
     throw new Error(`Workflow run artifacts are unavailable: ${runId}`);
   }
   return value;
+}
+
+/** Case-insensitive on Windows, where the same workspace can be spelled two ways. */
+function sameWorkspace(a: string, b: string): boolean {
+  const normalize = (value: string) => {
+    const resolved = resolve(value).replace(/[\\/]+$/, "");
+    return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  };
+  return normalize(a) === normalize(b);
+}
+
+/**
+ * A run still marked running whose heartbeat stopped is reported as aborted,
+ * the way the Pi-side dashboard does; nothing will ever finish it.
+ */
+export function effectiveStatus(
+  details: WorkflowShape,
+  now = Date.now(),
+): string | undefined {
+  if (details.status !== "running") return details.status;
+  const heartbeat = details.updatedAt ?? details.startedAt;
+  if (heartbeat === undefined) return details.status;
+  return now - heartbeat > STALE_RUN_MS ? "aborted" : details.status;
+}
+
+function withEffectiveStatus(details: WorkflowShape): WorkflowShape {
+  const status = effectiveStatus(details);
+  if (status === details.status) return details;
+  return {
+    ...details,
+    status,
+    error: details.error ?? "The session running this workflow ended.",
+  };
 }
 
 function summarize(
@@ -150,44 +190,32 @@ export const gizmoExtension = {
     return [descriptor()];
   },
   async invoke(
-    _workspacePath: string,
+    workspacePath: string,
     extensionId: string,
     operationId: string,
     input: unknown,
+    _signal?: AbortSignal,
+    agentDir?: string,
   ): Promise<unknown> {
     if (extensionId !== "workflows") {
       throw new Error(`Extension is not installed: ${extensionId}`);
     }
 
     if (operationId === "runs") {
-      let names: string[] = [];
-      try {
-        names = readdirSync(workflowRunsDir());
-      } catch {
-        return { runs: [] };
-      }
-      const runs: Record<string, unknown>[] = [];
-      for (const name of names) {
-        if (!RUN_ID_PATTERN.test(name)) continue;
-        const value = readJsonFile(
-          join(workflowRunsDir(), name, "workflow.json"),
-        );
-        if (isWorkflow(value)) runs.push(summarize(name, value));
-      }
-      runs.sort(
-        (left, right) =>
-          (Number(right.startedAt) || 0) - (Number(left.startedAt) || 0),
-      );
-      return { runs };
+      return { runs: listRuns(workspacePath, input, agentDir) };
     }
 
     if (operationId === "run") {
       const runId = readInputString(input, "runId");
-      const details = readWorkflow(runId);
-      // Rehydrate the stored result so the UI can show it verbatim.
+      const details = withEffectiveStatus(readWorkflow(runId, agentDir));
+      // The compact artifact keeps a marker in place of the result; the
+      // real value lives in result.json.
       let result = details.result;
-      if (details.resultArtifact === "result.json" && result === undefined) {
-        result = readJsonFile(join(runDir(runId), "result.json"));
+      if (details.resultArtifact) {
+        const stored = readJsonFile(
+          join(runDir(runId, agentDir), details.resultArtifact),
+        );
+        if (stored !== undefined) result = stored;
       }
       return { ...details, result };
     }
@@ -231,6 +259,55 @@ export const gizmoExtension = {
     );
   },
 };
+
+/**
+ * Runs launched from the given thread in the given workspace, newest first.
+ * The panel is per-thread: with no thread to scope to there is nothing to
+ * show, rather than every run on the machine.
+ */
+export function listRuns(
+  workspacePath: string,
+  input: unknown,
+  agentDir?: string,
+): Record<string, unknown>[] {
+  const payload = (
+    typeof input === "object" && input !== null ? input : {}
+  ) as { sessionId?: unknown };
+  const sessionId =
+    typeof payload.sessionId === "string" && payload.sessionId
+      ? payload.sessionId
+      : undefined;
+  if (!sessionId) return [];
+  let names: string[] = [];
+  try {
+    names = readdirSync(workflowRunsDir(agentDir));
+  } catch {
+    return [];
+  }
+  const runs: Record<string, unknown>[] = [];
+  for (const name of names) {
+    if (!RUN_ID_PATTERN.test(name)) continue;
+    const value = readJsonFile(
+      join(workflowRunsDir(agentDir), name, "workflow.json"),
+    );
+    if (!isWorkflow(value)) continue;
+    if (value.sessionId !== sessionId) continue;
+    // Runs that predate workspace tracking carry no cwd; the session match
+    // already pins them to one thread.
+    if (
+      value.cwd !== undefined &&
+      workspacePath &&
+      !sameWorkspace(value.cwd, workspacePath)
+    )
+      continue;
+    runs.push(summarize(name, withEffectiveStatus(value)));
+  }
+  runs.sort(
+    (left, right) =>
+      (Number(right.startedAt) || 0) - (Number(left.startedAt) || 0),
+  );
+  return runs;
+}
 
 function readInputString(input: unknown, key: string): string {
   const payload = (

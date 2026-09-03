@@ -32,6 +32,8 @@ export class WorkflowsRuntime implements WebExtensionRuntime {
   #timer: ReturnType<typeof setInterval> | undefined;
   #request?: Promise<void>;
   #disposed = false;
+  /** Thread the current list belongs to; a switch refetches at once. */
+  #sessionId: string | undefined;
 
   get inspectorTabs(): InspectorTabContribution[] {
     return [
@@ -78,11 +80,23 @@ export class WorkflowsRuntime implements WebExtensionRuntime {
 
   refresh(): Promise<void> {
     if (this.#disposed || !this.#context) return Promise.resolve();
-    if (this.#request) return this.#request;
+    const sessionId = this.#context.sessionId;
+    if (sessionId !== this.#sessionId) {
+      // Another thread is open: its runs are a different list.
+      this.#sessionId = sessionId;
+      this.runs = [];
+      this.selectedRunId = undefined;
+      this.selectedAgentIndex = undefined;
+      this.#run = undefined;
+      this.#runError = undefined;
+      this.#transcript = undefined;
+      this.error = undefined;
+      this.loading = true;
+    } else if (this.#request) return this.#request;
     this.#request = this.#context
-      .invoke("runs")
+      .invoke("runs", { sessionId })
       .then((value) => {
-        if (this.#disposed) return;
+        if (this.#disposed || this.#context?.sessionId !== sessionId) return;
         const runs = parseRuns(value);
         if (!runs) {
           this.error = "Workflows extension returned invalid data";
@@ -97,7 +111,7 @@ export class WorkflowsRuntime implements WebExtensionRuntime {
         }
       })
       .catch((error) => {
-        if (this.#disposed) return;
+        if (this.#disposed || this.#context?.sessionId !== sessionId) return;
         this.error = error instanceof Error ? error.message : String(error);
         this.loading = false;
       })

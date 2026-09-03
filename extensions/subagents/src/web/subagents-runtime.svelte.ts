@@ -9,6 +9,9 @@ import type {
 
 /** One subagent as reported by the agent-server snapshot operation. */
 export interface SubagentEntry {
+  /** Unique across sessions; `id` alone repeats (`sa-1` in every session). */
+  key: string;
+  sessionId?: string;
   id: string;
   title: string;
   status: "running" | "done" | "error";
@@ -43,6 +46,8 @@ export class SubagentsRuntime implements WebExtensionRuntime {
   #request?: Promise<void>;
   #lastFetch = 0;
   #disposed = false;
+  /** Thread the current list belongs to; a switch refetches at once. */
+  #sessionId: string | undefined;
 
   constructor(context: ExtensionContext) {
     this.#context = context;
@@ -82,11 +87,20 @@ export class SubagentsRuntime implements WebExtensionRuntime {
   }
 
   selected(): SubagentEntry | undefined {
-    return this.subagents.find((sub) => sub.id === this.selectedId);
+    return this.subagents.find((sub) => sub.key === this.selectedId);
   }
 
   refresh(manual = false): Promise<void> {
     if (this.#disposed) return Promise.resolve();
+    const sessionId = this.#context.sessionId;
+    if (sessionId !== this.#sessionId) {
+      // Another thread is open: its subagents are a different list.
+      this.#sessionId = sessionId;
+      this.subagents = [];
+      this.selectedId = undefined;
+      this.error = undefined;
+      manual = true;
+    }
     if (this.#request) return this.#request;
     if (
       !manual &&
@@ -97,9 +111,9 @@ export class SubagentsRuntime implements WebExtensionRuntime {
     this.#lastFetch = Date.now();
     this.loading = this.subagents.length === 0;
     this.#request = this.#context
-      .invoke("snapshot")
+      .invoke("snapshot", { sessionId })
       .then((value) => {
-        if (this.#disposed) return;
+        if (this.#disposed || this.#context.sessionId !== sessionId) return;
         const snapshot = parseSnapshot(value);
         if (!snapshot) {
           this.error = "Subagents extension returned invalid data";
@@ -111,7 +125,7 @@ export class SubagentsRuntime implements WebExtensionRuntime {
         this.loading = false;
       })
       .catch((error) => {
-        if (this.#disposed) return;
+        if (this.#disposed || this.#context.sessionId !== sessionId) return;
         this.error = error instanceof Error ? error.message : String(error);
         this.loading = false;
       })
@@ -136,6 +150,7 @@ function parseSnapshot(value: unknown): Snapshot | undefined {
   if (typeof candidate.updatedAt !== "number") return undefined;
   if (!Array.isArray(candidate.subagents)) return undefined;
   const subagents: SubagentEntry[] = [];
+  const seen = new Set<string>();
   for (const entry of candidate.subagents) {
     if (typeof entry !== "object" || entry === null) return undefined;
     const raw = entry as Record<string, unknown>;
@@ -148,7 +163,21 @@ function parseSnapshot(value: unknown): Snapshot | undefined {
     ) {
       return undefined;
     }
+    const sessionId =
+      typeof raw.sessionId === "string" ? raw.sessionId : undefined;
+    // Older servers send no key; derive one and never let two entries share
+    // it, since the panel keys its list on it.
+    let key =
+      typeof raw.key === "string"
+        ? raw.key
+        : sessionId
+          ? `${sessionId}:${raw.id}`
+          : raw.id;
+    while (seen.has(key)) key = `${key}#`;
+    seen.add(key);
     subagents.push({
+      key,
+      sessionId,
       id: raw.id,
       title: raw.title,
       status: raw.status,

@@ -105,7 +105,7 @@
 	{/if}
 	{#if phases.length > 0 && (tool.status === 'running' || agents.length > 0)}
 		<ol data-ui="workflow-phases">
-			{#each phases as phase, index (phase.title ?? index)}
+			{#each phases as phase, index (index)}
 				<li data-current={phase.title === currentPhase || undefined}>
 					{phase.title}{#if phase.detail}&nbsp;— {phase.detail}{/if}
 				</li>

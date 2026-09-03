@@ -127,12 +127,17 @@ function sanitizeMeta(value: unknown): WorkflowMeta {
     meta.description = raw.description.slice(0, 2_000);
   }
   if (Array.isArray(raw.phases)) {
+    const seen = new Set<string>();
     for (const item of raw.phases.slice(0, 64)) {
       if (!item || typeof item !== "object") continue;
       const phase = item as { title?: unknown; detail?: unknown };
       if (typeof phase.title !== "string" || !phase.title.trim()) continue;
+      const title = phase.title.slice(0, 160);
+      // Phases are keyed by title downstream; keep the first declaration.
+      if (seen.has(title)) continue;
+      seen.add(title);
       meta.phases.push({
-        title: phase.title.slice(0, 160),
+        title,
         ...(typeof phase.detail === "string"
           ? { detail: phase.detail.slice(0, 2_000) }
           : {}),

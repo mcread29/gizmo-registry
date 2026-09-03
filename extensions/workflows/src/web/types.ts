@@ -11,6 +11,8 @@ export interface ToolCallView {
 
 export interface ExtensionContext {
   projectPath: string;
+  /** Live thread id; changes when the user switches threads. */
+  readonly sessionId?: string;
   invoke(operation: string, input?: unknown): Promise<unknown>;
 }
 

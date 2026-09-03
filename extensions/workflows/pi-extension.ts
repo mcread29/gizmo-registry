@@ -88,6 +88,8 @@ export { gizmoExtension };
 
 const PREVIEW_LENGTH = 200;
 const EMIT_INTERVAL_MS = 120;
+/** Periodic workflow.json refresh so readers can tell a live run from a dead one. */
+const HEARTBEAT_INTERVAL_MS = 5_000;
 
 const THINKING_LEVELS = [
   "off",
@@ -223,7 +225,8 @@ function boundedArtifactTranscript(transcript: TranscriptEntry[]) {
   return entries;
 }
 
-function persistWorkflowJson(runDir: string, details: WorkflowDetails) {
+/** Bounded per-agent transcripts, written whenever an agent settles. */
+function persistTranscripts(runDir: string, details: WorkflowDetails) {
   const transcripts = Object.fromEntries(
     details.agents.map((agent) => [
       agent.index,
@@ -235,15 +238,17 @@ function persistWorkflowJson(runDir: string, details: WorkflowDetails) {
     "transcripts.json",
     safeStringify(transcripts, { maxBytes: 2 * 1024 * 1024 }),
   );
-  if (details.result !== undefined) {
-    writeRunFile(
-      runDir,
-      "result.json",
-      safeStringify(details.result, { maxBytes: 1024 * 1024 }),
-    );
-  }
+}
+
+/**
+ * Compact workflow.json (no transcripts, result kept in result.json) with an
+ * `updatedAt` heartbeat. Cheap enough to write on every throttled progress
+ * flush, which is what gives the Gizmo panel live progress mid-run.
+ */
+function persistWorkflowJson(runDir: string, details: WorkflowDetails) {
   const compact: WorkflowDetails = {
     ...details,
+    updatedAt: Date.now(),
     ...(details.result !== undefined
       ? { result: "[stored in result.json]", resultArtifact: "result.json" }
       : {}),
@@ -255,6 +260,19 @@ function persistWorkflowJson(runDir: string, details: WorkflowDetails) {
     "workflow.json",
     safeStringify(compact, { maxBytes: 1024 * 1024 }),
   );
+}
+
+/** Full artifact set: transcripts, result, and the compact workflow.json. */
+function persistRunArtifacts(runDir: string, details: WorkflowDetails) {
+  persistTranscripts(runDir, details);
+  if (details.result !== undefined) {
+    writeRunFile(
+      runDir,
+      "result.json",
+      safeStringify(details.result, { maxBytes: 1024 * 1024 }),
+    );
+  }
+  persistWorkflowJson(runDir, details);
 }
 
 interface RunSummary {
@@ -979,6 +997,7 @@ export default function workflows(pi: ExtensionAPI) {
       const details: WorkflowDetails = {
         runId,
         sessionId: ctx.sessionManager.getSessionId(),
+        cwd: ctx.cwd,
         name: meta.name,
         description: meta.description,
         background,
@@ -991,7 +1010,7 @@ export default function workflows(pi: ExtensionAPI) {
       writeRunFile(runDir, "script.js", params.script);
       if (params.args !== undefined)
         writeRunFile(runDir, "args.json", params.args);
-      persistWorkflowJson(runDir, details);
+      persistRunArtifacts(runDir, details);
 
       // Background runs survive Esc on the parent turn, but all runs are
       // aborted and settled during session shutdown.
@@ -1011,9 +1030,24 @@ export default function workflows(pi: ExtensionAPI) {
       // runs are covered by the below-editor indicator and /workflows.
       let emitTimer: ReturnType<typeof setTimeout> | undefined;
       let lastEmit = 0;
+      const persistProgress = () => {
+        try {
+          persistWorkflowJson(runDir, details);
+        } catch {
+          // Progress snapshots are best-effort; the final persist reports.
+        }
+      };
+      const persistSettledTranscripts = () => {
+        try {
+          persistTranscripts(runDir, details);
+        } catch {
+          // Same as above: the final persist reports failures.
+        }
+      };
       const flush = () => {
         emitTimer = undefined;
         lastEmit = Date.now();
+        persistProgress();
         if (background) return;
         onUpdate?.({
           content: [{ type: "text", text: summaryLine(details) }],
@@ -1079,6 +1113,7 @@ export default function workflows(pi: ExtensionAPI) {
           record.state = "error";
           record.error = error;
           record.finishedAt = Date.now();
+          persistSettledTranscripts();
           emit();
           return { ok: false, output: "", error };
         };
@@ -1184,6 +1219,7 @@ export default function workflows(pi: ExtensionAPI) {
             } else {
               record.error = outcome.error ?? "Agent failed";
             }
+            persistSettledTranscripts();
             emit();
 
             return {
@@ -1200,6 +1236,8 @@ export default function workflows(pi: ExtensionAPI) {
 
       const runScript = async () => {
         let status: WorkflowDetails["status"] = "completed";
+        const heartbeat = setInterval(persistProgress, HEARTBEAT_INTERVAL_MS);
+        heartbeat.unref?.();
         try {
           details.result = await runWorkflowSandbox({
             source: prepared.source,
@@ -1233,8 +1271,9 @@ export default function workflows(pi: ExtensionAPI) {
         }
         details.status = status;
         details.finishedAt = Date.now();
+        clearInterval(heartbeat);
         try {
-          persistWorkflowJson(runDir, details);
+          persistRunArtifacts(runDir, details);
         } catch (error) {
           details.status = "failed";
           details.error = `Artifact persistence failed: ${errorText(error)}`;

@@ -74,6 +74,10 @@ export interface WorkflowDetails {
   runId: string;
   /** Pi session that launched this run. */
   sessionId?: string;
+  /** Working directory (workspace) the run was launched from. */
+  cwd?: string;
+  /** Heartbeat: last time the persisted artifact was refreshed. */
+  updatedAt?: number;
   name?: string;
   description?: string;
   background: boolean;
