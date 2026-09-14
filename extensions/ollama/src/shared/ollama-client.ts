@@ -98,7 +98,10 @@ export function createOllamaClient(options: OllamaClientOptions = {}) {
 		}
 	}
 
-	async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+	async function requestJson<T>(
+		path: string,
+		init: RequestInit & { json?: unknown } = {},
+	): Promise<T> {
 		const response = await request(path, init);
 		return (await response.json()) as T;
 	}

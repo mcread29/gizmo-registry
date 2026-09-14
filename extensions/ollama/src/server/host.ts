@@ -16,7 +16,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { open, mkdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, open, rm, writeFile } from "node:fs/promises";
 import { homedir, platform as nodePlatform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";

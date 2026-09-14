@@ -7,23 +7,9 @@
  * handed in as the `run` callback and drives the job through its handle.
  */
 
-export type JobKind = "pull" | "host";
-export type JobStatus = "running" | "succeeded" | "failed" | "cancelled";
+import type { JobKind, JobSnapshot, JobStatus } from "../shared/types.ts";
 
-export interface JobSnapshot {
-	kind: JobKind;
-	/** Model name for pulls, target version for host jobs. */
-	target: string;
-	status: JobStatus;
-	stage: string;
-	/** 0-100 when the stage reports a determinate size, undefined otherwise. */
-	percent?: number;
-	/** Human-readable progress detail, e.g. "1.2 GB of 4.9 GB". */
-	message?: string;
-	error?: string;
-	startedAt: number;
-	finishedAt?: number;
-}
+export type { JobKind, JobSnapshot, JobStatus };
 
 export interface JobHandle {
 	setStage(stage: string, message?: string): void;
@@ -58,12 +44,16 @@ export class JobRegistry {
 		if (existing?.status === "running") throw new JobActiveError(kind);
 
 		const controller = new AbortController();
-		const job = {
+		const job: JobSnapshot & { controller: AbortController } = {
 			kind,
 			target,
-			status: "running" as const,
+			status: "running",
 			stage: "starting",
+			percent: undefined,
+			message: undefined,
+			error: undefined,
 			startedAt: Date.now(),
+			finishedAt: undefined,
 			controller,
 		};
 		this.#jobs.set(kind, job);
@@ -90,8 +80,9 @@ export class JobRegistry {
 		void run(handle, controller.signal)
 			.then(() => {
 				if (job.status !== "running") return;
-				job.status = "succeeded";
-				job.percent = 100;
+				// A run that resolves after cancellation is still a cancellation.
+				job.status = controller.signal.aborted ? "cancelled" : "succeeded";
+				if (!controller.signal.aborted) job.percent = 100;
 				job.finishedAt = Date.now();
 			})
 			.catch((error: unknown) => {
