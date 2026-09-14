@@ -1,0 +1,122 @@
+/**
+ * A tiny registry of long-running background jobs, keyed by kind
+ * ("pull", "host"). One active job per kind; the last finished job of a kind
+ * stays visible until the next one starts, so the UI can render its outcome.
+ *
+ * Pure bookkeeping: the actual work (Ollama HTTP streams, installers) is
+ * handed in as the `run` callback and drives the job through its handle.
+ */
+
+export type JobKind = "pull" | "host";
+export type JobStatus = "running" | "succeeded" | "failed" | "cancelled";
+
+export interface JobSnapshot {
+	kind: JobKind;
+	/** Model name for pulls, target version for host jobs. */
+	target: string;
+	status: JobStatus;
+	stage: string;
+	/** 0-100 when the stage reports a determinate size, undefined otherwise. */
+	percent?: number;
+	/** Human-readable progress detail, e.g. "1.2 GB of 4.9 GB". */
+	message?: string;
+	error?: string;
+	startedAt: number;
+	finishedAt?: number;
+}
+
+export interface JobHandle {
+	setStage(stage: string, message?: string): void;
+	setProgress(progress: {
+		completed?: number;
+		total?: number;
+		message?: string;
+	}): void;
+}
+
+export class JobActiveError extends Error {
+	constructor(kind: JobKind) {
+		super(`A ${kind} job is already running`);
+		this.name = "JobActiveError";
+	}
+}
+
+export class JobRegistry {
+	readonly #jobs = new Map<JobKind, JobSnapshot & { controller: AbortController }>();
+
+	/**
+	 * Start a job of `kind`. Throws `JobActiveError` if one is already
+	 * running. The returned snapshot is the state at start; observe later
+	 * state through `snapshot(kind)`.
+	 */
+	start(
+		kind: JobKind,
+		target: string,
+		run: (job: JobHandle, signal: AbortSignal) => Promise<void>,
+	): JobSnapshot {
+		const existing = this.#jobs.get(kind);
+		if (existing?.status === "running") throw new JobActiveError(kind);
+
+		const controller = new AbortController();
+		const job = {
+			kind,
+			target,
+			status: "running" as const,
+			stage: "starting",
+			startedAt: Date.now(),
+			controller,
+		};
+		this.#jobs.set(kind, job);
+
+		const handle: JobHandle = {
+			setStage: (stage, message) => {
+				if (job.status !== "running") return;
+				job.stage = stage;
+				job.message = message;
+				job.percent = undefined;
+			},
+			setProgress: ({ completed, total, message }) => {
+				if (job.status !== "running") return;
+				if (message !== undefined) job.message = message;
+				if (typeof total === "number" && total > 0) {
+					job.percent = Math.min(
+						100,
+						Math.max(0, ((completed ?? 0) / total) * 100),
+					);
+				}
+			},
+		};
+
+		void run(handle, controller.signal)
+			.then(() => {
+				if (job.status !== "running") return;
+				job.status = "succeeded";
+				job.percent = 100;
+				job.finishedAt = Date.now();
+			})
+			.catch((error: unknown) => {
+				if (job.status !== "running") return;
+				job.status = controller.signal.aborted ? "cancelled" : "failed";
+				job.error =
+					error instanceof Error ? error.message : String(error ?? "failed");
+				job.finishedAt = Date.now();
+			});
+
+		return this.snapshot(kind)!;
+	}
+
+	snapshot(kind: JobKind): JobSnapshot | null {
+		const job = this.#jobs.get(kind);
+		if (!job) return null;
+		const { controller: _controller, ...rest } = job;
+		return rest;
+	}
+
+	/** Whether a job of `kind` is currently accepting cancel requests. */
+	cancel(kind: JobKind): boolean {
+		const job = this.#jobs.get(kind);
+		if (job?.status !== "running") return false;
+		job.controller.abort();
+		return true;
+	}
+}
