@@ -1,0 +1,247 @@
+[data-ui="ollama-panel"] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-3);
+  font-size: var(--text-xs);
+  overflow-y: auto;
+}
+
+[data-ui="ollama-header"] {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+[data-ui="ollama-header"] strong {
+  font-size: var(--text-xs);
+}
+
+[data-ui="ollama-server"] {
+  padding: 1px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--color-text-muted);
+}
+
+[data-ui="ollama-server"][data-state="up"] {
+  color: var(--color-success, var(--color-text));
+}
+
+[data-ui="ollama-server"][data-state="down"] {
+  color: var(--color-danger);
+}
+
+[data-ui="ollama-refresh"] {
+  margin-left: auto;
+  padding: 2px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: var(--text-2xs);
+  cursor: pointer;
+}
+
+[data-ui="ollama-refresh"]:hover:not(:disabled) {
+  color: var(--color-text);
+  border-color: var(--color-text-muted);
+}
+
+[data-ui="ollama-refresh"]:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+[data-ui="ollama-action"] {
+  padding: 3px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--text-2xs);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+[data-ui="ollama-action"]:hover:not(:disabled) {
+  border-color: var(--color-text-muted);
+}
+
+[data-ui="ollama-action"]:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+[data-ui="ollama-action"][data-variant="danger"] {
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
+}
+
+[data-ui="ollama-error"] {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 35%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+[data-ui="ollama-host"],
+[data-ui="ollama-pull"],
+[data-ui="ollama-models"] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+[data-ui="ollama-host-row"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+[data-ui="ollama-host-row"] > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+[data-ui="ollama-muted"] {
+  font-size: var(--text-2xs);
+  color: var(--color-text-muted);
+}
+
+[data-ui="ollama-models"] h3 {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+[data-ui="ollama-pull-form"] {
+  display: flex;
+  gap: var(--space-2);
+}
+
+[data-ui="ollama-pull-form"] input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+}
+
+[data-ui="ollama-pull-form"] input:focus {
+  outline: none;
+  border-color: var(--color-text-muted);
+}
+
+[data-ui="ollama-pull-form"] input:disabled {
+  opacity: 0.5;
+}
+
+[data-ui="ollama-suggestions"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+[data-ui="ollama-chip"] {
+  padding: 1px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  cursor: pointer;
+}
+
+[data-ui="ollama-chip"]:hover:not(:disabled) {
+  color: var(--color-text);
+  border-color: var(--color-text-muted);
+}
+
+[data-ui="ollama-chip"]:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+[data-ui="ollama-job"] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+[data-ui="ollama-job"][data-status="failed"]
+  [data-ui="ollama-job-head"]
+  span:first-child {
+  color: var(--color-danger);
+}
+
+[data-ui="ollama-job-head"] {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--color-text-muted);
+}
+
+[data-ui="ollama-job"] progress {
+  width: 100%;
+  height: 4px;
+}
+
+[data-ui="ollama-model-list"] {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+[data-ui="ollama-model-row"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--color-border);
+}
+
+[data-ui="ollama-model-row"]:first-child {
+  border-top: none;
+}
+
+[data-ui="ollama-model-main"] {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+[data-ui="ollama-model-main"] strong {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+[data-ui="ollama-confirm"] {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-2xs);
+  color: var(--color-text-muted);
+}

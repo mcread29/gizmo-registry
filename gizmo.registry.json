@@ -51,6 +51,11 @@
       "id": "workflows",
       "name": "Workflows",
       "description": "Multi-agent workflow orchestration with live run inspection"
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama",
+      "description": "Local LLM/SLM models via Ollama: install, update, pull, and manage models as a Pi provider"
     }
   ]
 }

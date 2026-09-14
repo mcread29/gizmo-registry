@@ -28,37 +28,35 @@ const FALLBACK_CONTEXT_WINDOW = 8192;
 const MAX_OUTPUT_TOKENS = 16_384;
 
 function toProviderModel(model: ManagedModel): ProviderModelConfig {
-	const contextWindow = model.contextLength ?? FALLBACK_CONTEXT_WINDOW;
-	return {
-		id: model.name,
-		name: model.name,
-		reasoning: model.capabilities.includes("thinking"),
-		input: model.capabilities.includes("vision")
-			? ["text", "image"]
-			: ["text"],
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		contextWindow,
-		maxTokens: Math.min(contextWindow, MAX_OUTPUT_TOKENS),
-	};
+  const contextWindow = model.contextLength ?? FALLBACK_CONTEXT_WINDOW;
+  return {
+    id: model.name,
+    name: model.name,
+    reasoning: model.capabilities.includes("thinking"),
+    input: model.capabilities.includes("vision") ? ["text", "image"] : ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow,
+    maxTokens: Math.min(contextWindow, MAX_OUTPUT_TOKENS),
+  };
 }
 
 export default async function ollama(_pi: ExtensionAPI) {
-	const client = createOllamaClient();
+  const client = createOllamaClient();
 
-	_pi.registerProvider("ollama", {
-		name: "Ollama",
-		baseUrl: `${OLLAMA_HOST}/v1`,
-		// Ollama ignores credentials, but pi requires one for the provider.
-		apiKey: "ollama",
-		api: "openai-completions",
-		async refreshModels({ signal }) {
-			try {
-				const models = await listManagedModels(client, signal);
-				return models.map(toProviderModel);
-			} catch {
-				// Server down or mid-restart: an empty catalog beats a failed refresh.
-				return [];
-			}
-		},
-	});
+  _pi.registerProvider("ollama", {
+    name: "Ollama",
+    baseUrl: `${OLLAMA_HOST}/v1`,
+    // Ollama ignores credentials, but pi requires one for the provider.
+    apiKey: "ollama",
+    api: "openai-completions",
+    async refreshModels({ signal }) {
+      try {
+        const models = await listManagedModels(client, signal);
+        return models.map(toProviderModel);
+      } catch {
+        // Server down or mid-restart: an empty catalog beats a failed refresh.
+        return [];
+      }
+    },
+  });
 }
