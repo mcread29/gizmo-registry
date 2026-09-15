@@ -1,4 +1,4 @@
-import { GitCommit, RefreshCw } from "@lucide/svelte";
+import { GitCommit, RefreshCw, Upload } from "@lucide/svelte";
 import type { Component } from "svelte";
 import { toasts } from "@gizmo/ui";
 import ChangesPanel from "./ChangesPanel.svelte";
@@ -48,6 +48,42 @@ async function commitAll(store: GitHostStore): Promise<void> {
     const message = await store.generateCommitMessage();
     const result = await store.commitAll(message);
     toasts.show(`Committed ${result.commit.slice(0, 7)}`);
+  } catch (error) {
+    toasts.show(
+      error instanceof Error ? error.message : String(error),
+      "danger",
+    );
+  }
+}
+
+/**
+ * Pushes the selected project's branch, publishing it to `origin` first when
+ * it has no upstream. The command is the confirmation the operation asks for.
+ */
+async function pushCommits(store: GitCommandStore): Promise<void> {
+  const projectPath = store.selectedProjectPath;
+  if (!projectPath) return;
+  try {
+    const state = (await store.invokeProjectExtension(
+      projectPath,
+      "git",
+      "push-state",
+    )) as { upstream?: unknown } | undefined;
+    const result = (await store.invokeProjectExtension(
+      projectPath,
+      "git",
+      "push",
+      {
+        setUpstream: typeof state?.upstream !== "string",
+        confirmed: true,
+      },
+    )) as { branch?: string } | undefined;
+    toasts.show(
+      typeof state?.upstream === "string"
+        ? `Pushed ${result?.branch ?? "branch"} to ${state.upstream}`
+        : `Published ${result?.branch ?? "branch"} to origin`,
+    );
+    await store.refreshGitStatus();
   } catch (error) {
     toasts.show(
       error instanceof Error ? error.message : String(error),
@@ -125,6 +161,13 @@ export const gizmoWebExtension = {
         keywords: ["git", "commit"],
         icon: GitCommit,
         run: () => void commitAll(store),
+      },
+      {
+        id: "git.push",
+        label: "Push commits",
+        keywords: ["git", "push", "publish", "remote"],
+        icon: Upload,
+        run: () => void pushCommits(store),
       },
       {
         id: "git.refresh-status",

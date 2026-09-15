@@ -12,10 +12,12 @@
 		Plus,
 		RefreshCw,
 		Undo2,
+		Upload,
 	} from '@lucide/svelte';
 	import type { GitFileStatus } from '@gizmo/protocol';
 	import { SvelteSet } from 'svelte/reactivity';
 	import type { GitHostStore } from './host';
+	import type { GitPushState } from '../push';
 	import {
 		Button,
 		Dialog,
@@ -81,11 +83,13 @@
 	let commitDialogOpen = $state(false);
 	let commitMessage = $state('');
 	let generatingMessage = $state(false);
+	let pushState = $state<GitPushState>();
+	let pushing = $state(false);
 
 	$effect(() => {
 		projectPath;
-		void store
-			.refreshGitStatus()
+		store.refreshGitStatus()
+			.then(loadPushState)
 			.catch((error) =>
 				toasts.show(
 					error instanceof Error ? error.message : String(error),
@@ -93,6 +97,89 @@
 				),
 			);
 	});
+
+	async function loadPushState() {
+		if (!projectPath) return;
+		try {
+			pushState = parsePushState(
+				await store.invokeProjectExtension(projectPath, 'git', 'push-state'),
+			);
+		} catch {
+			// Push state is an affordance: a repository without a remote still
+			// shows changes and commits, so the control just stays unknown.
+			pushState = undefined;
+		}
+	}
+
+	function parsePushState(value: unknown): GitPushState | undefined {
+		if (typeof value !== 'object' || value === null) return undefined;
+		const candidate = value as Record<string, unknown>;
+		if (typeof candidate.branch !== 'string') return undefined;
+		const number = (input: unknown) =>
+			typeof input === 'number' && Number.isFinite(input) ? input : 0;
+		return {
+			branch: candidate.branch,
+			...(typeof candidate.upstream === 'string'
+				? { upstream: candidate.upstream }
+				: {}),
+			ahead: number(candidate.ahead),
+			behind: number(candidate.behind),
+			hasCommits: candidate.hasCommits === true,
+		};
+	}
+
+	/** Publishing is only offered when the branch has no upstream yet. */
+	let publishing = $derived(Boolean(pushState && !pushState.upstream));
+	let pushLabel = $derived(
+		pushing
+			? 'Pushing…'
+			: publishing
+				? 'Publish'
+				: pushState && pushState.ahead > 0
+					? `Push ${pushState.ahead}`
+					: 'Push',
+	);
+	let pushTitle = $derived(
+		publishing
+			? 'Push this branch and set its upstream to origin'
+			: pushState?.upstream
+				? `Push to ${pushState.upstream}`
+				: 'Push this branch',
+	);
+	let pushDisabled = $derived(
+		pushing ||
+		!pushState ||
+		!pushState.hasCommits ||
+		(!publishing && pushState.ahead === 0),
+	);
+
+	async function push() {
+		if (!projectPath) return;
+		pushing = true;
+		try {
+			const result = await store.invokeProjectExtension(
+				projectPath,
+				'git',
+				'push',
+				{ setUpstream: publishing, confirmed: true },
+			);
+			const branch = (result as { branch?: unknown } | null)?.branch;
+			const name = typeof branch === 'string' ? branch : (pushState?.branch ?? 'branch');
+			toasts.show(
+				publishing
+					? `Published ${name} to origin`
+					: `Pushed ${name} to ${pushState?.upstream ?? 'origin'}`,
+			);
+		} catch (error) {
+			toasts.show(
+				error instanceof Error ? error.message : String(error),
+				'danger',
+			);
+		} finally {
+			pushing = false;
+			await loadPushState();
+		}
+	}
 
 	function filesFor(groupStatuses: GitFileStatus[]) {
 		return groupStatuses.map((status) => {
@@ -207,6 +294,8 @@
 			const result = await store.commitAll(commitMessage);
 			commitDialogOpen = false;
 			toasts.show(`Committed ${result.commit.slice(0, 7)}`);
+			// A new commit is one more than the upstream has.
+			void loadPushState();
 		} catch (error) {
 			toasts.show(
 				error instanceof Error ? error.message : String(error),
@@ -286,6 +375,14 @@
 			><GitCommit size={14} />{generatingMessage
 				? 'Writing message…'
 				: 'Commit all'}</Button
+		>
+		<Button
+			variant="ghost"
+			size="sm"
+			disabled={pushDisabled}
+			title={pushTitle}
+			onclick={push}
+			><Upload size={14} />{pushLabel}</Button
 		>
 	</div>
 </div>

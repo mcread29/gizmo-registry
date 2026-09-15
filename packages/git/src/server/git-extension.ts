@@ -13,7 +13,7 @@ function descriptor(): ExtensionDescriptor {
     name: "Git",
     version: "0.0.0",
     apiVersion,
-    capabilities: ["status", "stage", "commit"],
+    capabilities: ["status", "stage", "commit", "push"],
     operations: [
       {
         id: "commit-context",
@@ -27,6 +27,17 @@ function descriptor(): ExtensionDescriptor {
         id: "commit",
         mutates: true,
         requiresConfirmation: false,
+      },
+      {
+        id: "push-state",
+        mutates: false,
+        requiresConfirmation: false,
+      },
+      {
+        id: "push",
+        mutates: true,
+        // Pushing publishes work to a shared remote; the caller must say so.
+        requiresConfirmation: true,
       },
     ],
   };
@@ -58,6 +69,13 @@ export const gizmoExtension: GizmoServerExtension = {
             : "";
         return service.commitAll(workspacePath, message);
       }
+      case "push-state":
+        return service.pushState(workspacePath, signal);
+      case "push":
+        return service.push(workspacePath, {
+          setUpstream:
+            (input as { setUpstream?: unknown } | null)?.setUpstream === true,
+        });
       default:
         throw new Error(`Unknown Git operation: ${operationId}`);
     }

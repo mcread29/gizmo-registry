@@ -7,6 +7,7 @@ import type {
   GitFileStatus,
   GitStatus,
 } from "@gizmo/protocol";
+import type { GitPushResult, GitPushState } from "../push";
 
 const execFileAsync = promisify(execFile);
 const maxGitOutput = 4 * 1024 * 1024;
@@ -68,6 +69,59 @@ export class GitService {
     ]
       .join("\n\n")
       .slice(0, maxPromptDiff);
+  }
+
+  /**
+   * What a push would do: whether the branch is published, and how far it
+   * sits ahead of or behind its upstream. Unpublished and empty repositories
+   * are legal states, not errors.
+   */
+  async pushState(
+    projectPath: string,
+    signal?: AbortSignal,
+  ): Promise<GitPushState> {
+    const rootPath = await this.#root(projectPath, signal);
+    const branch = await this.#branch(rootPath, signal);
+    const upstream = await this.#upstream(rootPath, signal);
+    const hasCommits = await this.#hasCommits(rootPath, signal);
+    let ahead = 0;
+    let behind = 0;
+    if (upstream && hasCommits) {
+      // Left side is HEAD-only (ahead), right side is upstream-only (behind).
+      const { stdout } = await this.#git(
+        rootPath,
+        ["rev-list", "--left-right", "--count", `HEAD...@{upstream}`],
+        signal,
+      );
+      const [left, right] = stdout.trim().split(/\s+/);
+      ahead = Number.parseInt(left ?? "0", 10) || 0;
+      behind = Number.parseInt(right ?? "0", 10) || 0;
+    }
+    return {
+      branch,
+      ...(upstream ? { upstream } : {}),
+      ahead,
+      behind,
+      hasCommits,
+    };
+  }
+
+  /**
+   * Pushes the current branch. Never force-pushes: a rejected push stays
+   * rejected so the user decides what to do about it.
+   */
+  async push(
+    projectPath: string,
+    options: { setUpstream?: boolean } = {},
+  ): Promise<GitPushResult> {
+    const rootPath = await this.#root(projectPath);
+    const branch = await this.#branch(rootPath);
+    const setUpstream = options.setUpstream === true;
+    const args = setUpstream
+      ? ["push", "--set-upstream", "origin", branch]
+      : ["push"];
+    const { stdout, stderr } = await this.#git(rootPath, args);
+    return { branch, setUpstream, output: (stderr || stdout).trim() };
   }
 
   async stageFile(projectPath: string, path: string): Promise<void> {
@@ -144,6 +198,31 @@ export class GitService {
         signal,
       );
       return stdout.trim();
+    }
+  }
+
+  async #upstream(
+    rootPath: string,
+    signal?: AbortSignal,
+  ): Promise<string | undefined> {
+    try {
+      const { stdout } = await this.#git(
+        rootPath,
+        ["rev-parse", "--abbrev-ref", "@{upstream}"],
+        signal,
+      );
+      return stdout.trim() || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  async #hasCommits(rootPath: string, signal?: AbortSignal): Promise<boolean> {
+    try {
+      await this.#git(rootPath, ["rev-parse", "--verify", "HEAD"], signal);
+      return true;
+    } catch {
+      return false;
     }
   }
 

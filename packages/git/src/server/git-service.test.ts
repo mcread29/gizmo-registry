@@ -10,6 +10,7 @@ const execFileAsync = promisify(execFile);
 
 describe("GitService", () => {
   let directory: string;
+  const remotes: string[] = [];
 
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), "gizmo-git-"));
@@ -23,6 +24,10 @@ describe("GitService", () => {
 
   afterEach(async () => {
     await rm(directory, { recursive: true, force: true });
+    for (const remote of remotes) {
+      await rm(remote, { recursive: true, force: true });
+    }
+    remotes.length = 0;
   });
 
   it("reports staged, unstaged, and untracked files", async () => {
@@ -78,6 +83,59 @@ describe("GitService", () => {
     expect(result.message).toBe("Add new file");
     expect(result.commit).toMatch(/^[0-9a-f]{40}$/);
     expect((await service.status(directory)).clean).toBe(true);
+  });
+
+  it("reports an unpublished branch with no upstream", async () => {
+    const state = await new GitService().pushState(directory);
+
+    expect(state).toEqual({
+      branch: "main",
+      ahead: 0,
+      behind: 0,
+      hasCommits: true,
+    });
+  });
+
+  it("publishes a branch and then tracks how far ahead it is", async () => {
+    const remote = await mkdtemp(join(tmpdir(), "gizmo-git-remote-"));
+    remotes.push(remote);
+    await execFileAsync("git", ["init", "--bare", join(remote, "remote.git")]);
+    await git(directory, [
+      "remote",
+      "add",
+      "origin",
+      join(remote, "remote.git"),
+    ]);
+    const service = new GitService();
+
+    const published = await service.push(directory, { setUpstream: true });
+    expect(published.branch).toBe("main");
+    expect(published.setUpstream).toBe(true);
+
+    const publishedState = await service.pushState(directory);
+    expect(publishedState.upstream).toBe("origin/main");
+    expect(publishedState).toMatchObject({ ahead: 0, behind: 0 });
+
+    await writeFile(join(directory, "tracked.txt"), "after\n");
+    await service.commitAll(directory, "Second commit");
+    expect(await service.pushState(directory)).toMatchObject({
+      upstream: "origin/main",
+      ahead: 1,
+      behind: 0,
+    });
+
+    const pushed = await service.push(directory);
+    expect(pushed.setUpstream).toBe(false);
+    expect(await service.pushState(directory)).toMatchObject({
+      ahead: 0,
+      behind: 0,
+    });
+  });
+
+  it("surfaces git's own error when there is no remote to push to", async () => {
+    const service = new GitService();
+
+    await expect(service.push(directory)).rejects.toThrow(/origin|remote/i);
   });
 });
 
