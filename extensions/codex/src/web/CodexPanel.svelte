@@ -10,6 +10,8 @@
 
   let { runtime }: { runtime: CodexRuntime } = $props();
 
+  let showEmail = $state(false);
+
   let windows = $derived(
     [runtime.usage?.primary, runtime.usage?.secondary].filter(
       (window): window is CodexUsageWindow => window !== null,
@@ -26,21 +28,6 @@
 </script>
 
 <div data-ui="codex-panel">
-  <header data-ui="codex-header">
-    <strong>Codex usage</strong>
-    {#if runtime.usage?.planType}
-      <span data-ui="codex-plan">{runtime.usage.planType}</span>
-    {/if}
-    <button
-      type="button"
-      data-ui="codex-refresh"
-      disabled={runtime.loading}
-      onclick={() => void runtime.refresh(true)}
-    >
-      {runtime.loading ? "Loading…" : "Refresh"}
-    </button>
-  </header>
-
   {#if runtime.error}
     <p data-ui="codex-error">{runtime.error}</p>
   {:else if !runtime.usage}
@@ -116,7 +103,19 @@
       <span>
         Updated {new Date(runtime.updatedAt).toLocaleTimeString()}
       </span>
-      {#if runtime.usage.email}<span>{runtime.usage.email}</span>{/if}
+      {#if runtime.usage.email}
+        {#if showEmail}
+          <span data-ui="codex-email">{runtime.usage.email}</span>
+        {/if}
+        <button
+          type="button"
+          data-ui="codex-email-toggle"
+          aria-expanded={showEmail}
+          onclick={() => (showEmail = !showEmail)}
+        >
+          {showEmail ? "Hide email" : "Show email"}
+        </button>
+      {/if}
     </footer>
   {/if}
 </div>

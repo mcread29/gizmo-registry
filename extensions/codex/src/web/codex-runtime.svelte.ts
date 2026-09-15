@@ -47,13 +47,10 @@ export class CodexRuntime implements WebExtensionRuntime {
   }
 
   get inspectorTabs(): InspectorTabContribution[] {
-    const worst = this.worstUsedPercent;
     return [
       {
         id: "codex.usage",
         label: "Codex",
-        badge: worst !== undefined ? Math.round(worst) : undefined,
-        badgeTone: worst !== undefined && worst >= 90 ? "danger" : "accent",
         component: CodexPanel as Component<any>,
         props: { runtime: this },
       },
