@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { RefreshCw } from '@lucide/svelte';
 	import {
 		SubagentsRuntime,
 		type SubagentEntry,
@@ -48,16 +49,18 @@
 		<span data-tone="error"
 			><i></i>Failed <strong>{runtime.failedCount}</strong></span
 		>
+		<button
+			type="button"
+			data-ui="subagents-refresh"
+			class:spinning={runtime.loading}
+			disabled={runtime.loading}
+			title="Refresh"
+			aria-label="Refresh subagents"
+			onclick={() => void runtime.refresh(true)}
+		>
+			<RefreshCw size={12} />
+		</button>
 	</div>
-
-	<button
-		type="button"
-		data-ui="subagents-refresh"
-		disabled={runtime.loading}
-		onclick={() => void runtime.refresh(true)}
-	>
-		{runtime.loading ? 'Loading…' : 'Refresh'}
-	</button>
 
 	{#if runtime.error}
 		<p data-ui="subagents-error">{runtime.error}</p>
@@ -183,18 +186,38 @@
 	}
 
 	[data-ui='subagents-refresh'] {
-		align-self: flex-start;
+		margin-left: auto;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.35rem;
+		height: 1.35rem;
 		border: none;
+		border-radius: 0.35rem;
 		background: none;
-		color: var(--color-accent, var(--accent, inherit));
+		color: var(--color-text-muted, var(--text-muted, inherit));
 		cursor: pointer;
-		font-size: 0.78rem;
 		padding: 0;
+	}
+
+	[data-ui='subagents-refresh']:hover:not(:disabled) {
+		color: var(--color-text, inherit);
+		background: color-mix(in srgb, currentColor 10%, transparent);
 	}
 
 	[data-ui='subagents-refresh']:disabled {
 		opacity: 0.5;
 		cursor: default;
+	}
+
+	[data-ui='subagents-refresh'].spinning {
+		animation: subagents-spin 0.9s linear infinite;
+	}
+
+	@keyframes subagents-spin {
+		to {
+			transform: rotate(360deg);
+		}
 	}
 
 	[data-ui='subagents-error'] {
