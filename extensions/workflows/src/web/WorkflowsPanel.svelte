@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { RefreshCw } from '@lucide/svelte';
 	import {
 		WorkflowsRuntime,
 		type AgentRecordView,
@@ -185,21 +186,28 @@
 			{runtime.runError ?? 'Loading run…'}
 		</p>
 	{:else}
-		<div data-ui="tool-metrics">
-			<div><span>Running</span><strong>{runtime.runningCount}</strong></div>
-			<div><span>Total runs</span><strong>{runtime.runs.length}</strong></div>
-			<div>
-				<span>Failed agents</span><strong>{runtime.failedCount}</strong>
-			</div>
+		<div data-ui="workflows-totals">
+			<span data-tone="running"
+				><i></i>Running <strong>{runtime.runningCount}</strong></span
+			>
+			<span data-tone="total"
+				><i></i>Total runs <strong>{runtime.runs.length}</strong></span
+			>
+			<span data-tone="failed"
+				><i></i>Failed agents <strong>{runtime.failedCount}</strong></span
+			>
+			<button
+				type="button"
+				data-ui="workflows-refresh"
+				class:spinning={runtime.loading}
+				disabled={runtime.loading}
+				title="Refresh"
+				aria-label="Refresh workflow runs"
+				onclick={() => void runtime.refresh()}
+			>
+				<RefreshCw size={12} />
+			</button>
 		</div>
-		<button
-			type="button"
-			data-ui="workflows-refresh"
-			disabled={runtime.loading}
-			onclick={() => void runtime.refresh()}
-		>
-			{runtime.loading ? 'Loading…' : 'Refresh'}
-		</button>
 		{#if runtime.error}
 			<p data-ui="workflows-error">{runtime.error}</p>
 		{:else if runtime.runs.length === 0}
@@ -246,8 +254,7 @@
 		flex: 1;
 	}
 
-	[data-ui='workflows-back'],
-	[data-ui='workflows-refresh'] {
+	[data-ui='workflows-back'] {
 		align-self: flex-start;
 		border: none;
 		background: none;
@@ -257,9 +264,77 @@
 		padding: 0;
 	}
 
+	[data-ui='workflows-totals'] {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		font-size: 0.72rem;
+		color: var(--color-text-muted, var(--text-muted, inherit));
+	}
+
+	[data-ui='workflows-totals'] span {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		white-space: nowrap;
+	}
+
+	[data-ui='workflows-totals'] i {
+		width: 0.45rem;
+		height: 0.45rem;
+		border-radius: 999px;
+		background: currentColor;
+		opacity: 0.45;
+	}
+
+	[data-ui='workflows-totals'] [data-tone='running'] i {
+		color: var(--color-warning, var(--warning, inherit));
+		opacity: 1;
+	}
+
+	[data-ui='workflows-totals'] [data-tone='failed'] i {
+		color: var(--color-danger, var(--danger, inherit));
+		opacity: 1;
+	}
+
+	[data-ui='workflows-totals'] strong {
+		font-weight: 600;
+		color: var(--color-text, inherit);
+	}
+
+	[data-ui='workflows-refresh'] {
+		margin-left: auto;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.35rem;
+		height: 1.35rem;
+		border: none;
+		border-radius: 0.35rem;
+		background: none;
+		color: var(--color-text-muted, var(--text-muted, inherit));
+		cursor: pointer;
+		padding: 0;
+	}
+
+	[data-ui='workflows-refresh']:hover:not(:disabled) {
+		color: var(--color-text, inherit);
+		background: color-mix(in srgb, currentColor 10%, transparent);
+	}
+
 	[data-ui='workflows-refresh']:disabled {
 		opacity: 0.5;
 		cursor: default;
+	}
+
+	[data-ui='workflows-refresh'].spinning {
+		animation: workflows-spin 0.9s linear infinite;
+	}
+
+	@keyframes workflows-spin {
+		to {
+			transform: rotate(360deg);
+		}
 	}
 
 	[data-ui='workflows-run-head'],
