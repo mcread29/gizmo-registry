@@ -1,0 +1,7 @@
+{"id":"0001","session":"01a0a348-d297-7fc7-8d43-a31063ef252d","firstEntryId":"1cf7a8b1","lastEntryId":"4eb1745d","at":"2026-09-15T15:56:24.809Z","messages":23,"bytes":37245,"trigger":"threshold"}
+{"id":"0002","session":"01a0a348-d297-7fc7-8d43-a31063ef252d","firstEntryId":"b0202894","lastEntryId":"d90c9814","at":"2026-09-15T16:36:18.214Z","messages":14,"bytes":22906,"trigger":"session-end"}
+{"id":"0003","session":"01a0a348-d297-7fc7-8d43-a31063ef252d","firstEntryId":"233eb4ae","lastEntryId":"53553fb8","at":"2026-09-15T20:42:31.469Z","messages":23,"bytes":31451,"trigger":"threshold"}
+{"id":"0004","session":"01a0a348-d297-7fc7-8d43-a31063ef252d","firstEntryId":"68105937","lastEntryId":"6278866e","at":"2026-09-15T20:43:36.295Z","messages":7,"bytes":16297,"trigger":"threshold"}
+{"id":"0005","session":"01a0a348-d297-7fc7-8d43-a31063ef252d","firstEntryId":"5416cd11","lastEntryId":"1edbaaed","at":"2026-09-15T20:50:35.231Z","messages":11,"bytes":19913,"trigger":"threshold"}
+{"id":"0006","session":"01a0a348-d297-7fc7-8d43-a31063ef252d","firstEntryId":"917e00a3","lastEntryId":"bd4889c2","at":"2026-09-15T20:54:04.877Z","messages":14,"bytes":22864,"trigger":"threshold"}
+{"id":"0007","session":"01a0a348-d297-7fc7-8d43-a31063ef252d","firstEntryId":"a64ef732","lastEntryId":"9f41714a","at":"2026-09-15T20:57:46.141Z","messages":12,"bytes":14169,"trigger":"threshold"}
