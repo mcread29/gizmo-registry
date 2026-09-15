@@ -30,6 +30,20 @@ export interface Snapshot {
   subagents: SubagentEntry[];
 }
 
+/** One message of a subagent transcript, oldest first. */
+export interface ThreadMessage {
+  role: string;
+  text: string;
+}
+
+/** Transcript state for one subagent, keyed by the entry's unique key. */
+export interface ThreadView {
+  updatedAt: number;
+  messages: ThreadMessage[];
+  loading: boolean;
+  error?: string;
+}
+
 /**
  * Subagents' web runtime: polls the server-side snapshot operation and feeds
  * the inspector tab. Polls fast while anything is running, slowly otherwise.
@@ -40,6 +54,9 @@ export class SubagentsRuntime implements WebExtensionRuntime {
   error = $state<string>();
   updatedAt = $state(0);
   selectedId = $state<string>();
+  threads = $state<Record<string, ThreadView>>({});
+  /** Threads the panel is showing; only these are refetched while polling. */
+  readonly #openThreads = new Set<string>();
 
   readonly #context: ExtensionContext;
   readonly #timer: ReturnType<typeof setInterval>;
@@ -90,6 +107,51 @@ export class SubagentsRuntime implements WebExtensionRuntime {
     return this.subagents.find((sub) => sub.key === this.selectedId);
   }
 
+  /** Fetches a subagent's transcript and keeps it fresh while it is open. */
+  openThread(key: string): void {
+    this.#openThreads.add(key);
+    void this.loadThread(key);
+  }
+
+  closeThread(key: string): void {
+    this.#openThreads.delete(key);
+  }
+
+  async loadThread(key: string): Promise<void> {
+    const sub = this.subagents.find((entry) => entry.key === key);
+    if (!sub) return;
+    const sessionId = sub.sessionId ?? this.#context.sessionId;
+    this.threads[key] = {
+      updatedAt: this.threads[key]?.updatedAt ?? 0,
+      messages: this.threads[key]?.messages ?? [],
+      loading: true,
+    };
+    try {
+      const value = await this.#context.invoke("thread", {
+        ...(sessionId !== undefined ? { sessionId } : {}),
+        id: sub.id,
+      });
+      const thread = parseThread(value);
+      if (!thread) {
+        this.threads[key] = {
+          updatedAt: 0,
+          messages: [],
+          loading: false,
+          error: "Subagents extension returned invalid thread data",
+        };
+        return;
+      }
+      this.threads[key] = { ...thread, loading: false };
+    } catch (error) {
+      this.threads[key] = {
+        updatedAt: 0,
+        messages: [],
+        loading: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
   refresh(manual = false): Promise<void> {
     if (this.#disposed) return Promise.resolve();
     const sessionId = this.#context.sessionId;
@@ -123,6 +185,8 @@ export class SubagentsRuntime implements WebExtensionRuntime {
         this.updatedAt = snapshot.updatedAt;
         this.error = undefined;
         this.loading = false;
+        // Open transcripts follow the live thread while it runs.
+        for (const key of this.#openThreads) void this.loadThread(key);
       })
       .catch((error) => {
         if (this.#disposed || this.#context.sessionId !== sessionId) return;
@@ -138,7 +202,28 @@ export class SubagentsRuntime implements WebExtensionRuntime {
   dispose(): void {
     this.#disposed = true;
     clearInterval(this.#timer);
+    this.#openThreads.clear();
   }
+}
+
+function parseThread(value: unknown): Omit<ThreadView, "loading"> | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const candidate = value as {
+    updatedAt?: unknown;
+    messages?: unknown;
+  };
+  if (typeof candidate.updatedAt !== "number") return undefined;
+  if (!Array.isArray(candidate.messages)) return undefined;
+  const messages: ThreadMessage[] = [];
+  for (const entry of candidate.messages) {
+    if (typeof entry !== "object" || entry === null) return undefined;
+    const raw = entry as Record<string, unknown>;
+    if (typeof raw.role !== "string" || typeof raw.text !== "string") {
+      return undefined;
+    }
+    messages.push({ role: raw.role, text: raw.text });
+  }
+  return { updatedAt: candidate.updatedAt, messages };
 }
 
 function parseSnapshot(value: unknown): Snapshot | undefined {

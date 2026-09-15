@@ -2,6 +2,7 @@
 	import {
 		SubagentsRuntime,
 		type SubagentEntry,
+		type ThreadView,
 	} from './subagents-runtime.svelte';
 
 	let { runtime }: { runtime: SubagentsRuntime } = $props();
@@ -9,7 +10,18 @@
 	let expandedId = $state<string>();
 
 	function toggle(sub: SubagentEntry) {
-		expandedId = expandedId === sub.key ? undefined : sub.key;
+		if (expandedId === sub.key) {
+			expandedId = undefined;
+			runtime.closeThread(sub.key);
+			return;
+		}
+		if (expandedId) runtime.closeThread(expandedId);
+		expandedId = sub.key;
+		runtime.openThread(sub.key);
+	}
+
+	function threadFor(sub: SubagentEntry): ThreadView | undefined {
+		return runtime.threads[sub.key];
 	}
 
 	function elapsed(sub: SubagentEntry): string {
@@ -28,10 +40,14 @@
 </script>
 
 <div data-ui="subagents-panel">
-	<div data-ui="tool-metrics">
-		<div><span>Running</span><strong>{runtime.runningCount}</strong></div>
-		<div><span>Done</span><strong>{runtime.doneCount}</strong></div>
-		<div><span>Failed</span><strong>{runtime.failedCount}</strong></div>
+	<div data-ui="subagents-totals">
+		<span data-tone="running"
+			><i></i>Running <strong>{runtime.runningCount}</strong></span
+		>
+		<span data-tone="done"><i></i>Done <strong>{runtime.doneCount}</strong></span>
+		<span data-tone="error"
+			><i></i>Failed <strong>{runtime.failedCount}</strong></span
+		>
 	</div>
 
 	<button
@@ -84,6 +100,28 @@
 							{:else if sub.status === 'running'}
 								<p data-ui="subagent-pending">No output yet.</p>
 							{/if}
+
+							<section data-ui="subagent-thread">
+								<h3>Thread</h3>
+								{#if threadFor(sub)?.error}
+									<p data-ui="subagent-error">{threadFor(sub)?.error}</p>
+								{:else if threadFor(sub)?.messages.length}
+									<ol>
+										{#each threadFor(sub)?.messages ?? [] as message, index (index)}
+											<li data-role={message.role}>
+												<span data-ui="thread-role">{message.role}</span>
+												<pre>{message.text}</pre>
+											</li>
+										{/each}
+									</ol>
+								{:else if threadFor(sub)?.loading}
+									<p data-ui="subagent-pending">Loading transcript…</p>
+								{:else}
+									<p data-ui="subagent-pending">
+										No transcript recorded yet.
+									</p>
+								{/if}
+							</section>
 						</div>
 					{/if}
 				</li>
@@ -99,6 +137,49 @@
 		gap: 0.5rem;
 		min-height: 0;
 		flex: 1;
+	}
+
+	[data-ui='subagents-totals'] {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		font-size: 0.72rem;
+		color: var(--color-text-muted, var(--text-muted, inherit));
+	}
+
+	[data-ui='subagents-totals'] span {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		white-space: nowrap;
+	}
+
+	[data-ui='subagents-totals'] i {
+		width: 0.45rem;
+		height: 0.45rem;
+		border-radius: 999px;
+		background: currentColor;
+		opacity: 0.45;
+	}
+
+	[data-ui='subagents-totals'] [data-tone='running'] i {
+		color: var(--color-warning, var(--warning, inherit));
+		opacity: 1;
+	}
+
+	[data-ui='subagents-totals'] [data-tone='done'] i {
+		color: var(--color-success, var(--success, inherit));
+		opacity: 1;
+	}
+
+	[data-ui='subagents-totals'] [data-tone='error'] i {
+		color: var(--color-danger, var(--danger, inherit));
+		opacity: 1;
+	}
+
+	[data-ui='subagents-totals'] strong {
+		font-weight: 600;
+		color: var(--color-text, inherit);
 	}
 
 	[data-ui='subagents-refresh'] {
@@ -251,6 +332,63 @@
 	[data-ui='subagent-pending'] {
 		margin: 0;
 		opacity: 0.6;
+	}
+
+	[data-ui='subagent-thread'] {
+		display: flex;
+		flex-direction: column;
+		gap: 0.3rem;
+		min-width: 0;
+	}
+
+	[data-ui='subagent-thread'] h3 {
+		margin: 0;
+		font-size: 0.7rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		opacity: 0.6;
+	}
+
+	[data-ui='subagent-thread'] ol {
+		display: flex;
+		flex-direction: column;
+		gap: 0.3rem;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		max-height: 18rem;
+		overflow-y: auto;
+	}
+
+	[data-ui='subagent-thread'] li {
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+		padding: 0.35rem 0.45rem;
+		border-radius: 0.35rem;
+		background: color-mix(in srgb, currentColor 5%, transparent);
+		min-width: 0;
+	}
+
+	[data-ui='thread-role'] {
+		font-size: 0.68rem;
+		font-family: var(--font-mono, monospace);
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		opacity: 0.55;
+	}
+
+	[data-ui='subagent-thread'] li[data-role='assistant'] [data-ui='thread-role'] {
+		opacity: 0.8;
+	}
+
+	[data-ui='subagent-thread'] pre {
+		margin: 0;
+		font-size: 0.72rem;
+		line-height: 1.45;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
 	}
 
 	[data-ui='empty-state'] {

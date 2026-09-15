@@ -58,8 +58,11 @@ import { gizmoExtension } from "./src/server/index.ts";
 import {
   boundedHead,
   boundedTail,
+  removeSubagentThreads,
   writeSubagentState,
+  writeSubagentThread,
   type SubagentStateEntry,
+  type SubagentThreadMessage,
 } from "./src/state.ts";
 import { openSubagentPicker } from "./src/takeover.ts";
 
@@ -161,6 +164,25 @@ function messageText(message: unknown) {
     .join("\n");
 }
 
+/** Full transcript of one subagent, oldest first, for the web thread view. */
+function threadMessages(sub: Subagent): SubagentThreadMessage[] {
+  const messages: SubagentThreadMessage[] = [];
+  for (const message of sub.session.messages) {
+    const text = messageText(message);
+    if (!text) continue;
+    messages.push({
+      role: (message as { role?: string }).role ?? "event",
+      text,
+    });
+  }
+  // While streaming, the newest text lives outside the message list.
+  const live = latestOutput(sub);
+  if (sub.session.isStreaming && live) {
+    messages.push({ role: "assistant", text: live });
+  }
+  return messages;
+}
+
 function transcriptLines(sub: Subagent) {
   const lines = sub.session.messages.flatMap((message) => {
     const text = messageText(message);
@@ -234,6 +256,38 @@ export default function (pi: ExtensionAPI) {
         workspacePath: sessionContext?.cwd,
       });
     }, 250);
+  };
+
+  // Transcripts dwarf the snapshot, so they get their own slower cadence and
+  // are only rewritten when a thread actually changed.
+  const THREAD_WRITE_MS = 2_000;
+  let threadWriteTimer: ReturnType<typeof setTimeout> | undefined;
+  const threadSignatures = new Map<string, string>();
+
+  const writeThreads = () => {
+    const sessionId = sessionContext?.sessionManager.getSessionId();
+    if (!sessionId) return;
+    for (const sub of manager.list()) {
+      const messages = threadMessages(sub);
+      const last = messages[messages.length - 1];
+      const signature = `${messages.length}:${last?.text.length ?? 0}`;
+      if (threadSignatures.get(sub.id) === signature) continue;
+      threadSignatures.set(sub.id, signature);
+      writeSubagentThread(sessionId, sub.id, messages);
+    }
+  };
+
+  const scheduleThreadWrite = () => {
+    if (threadWriteTimer) return;
+    threadWriteTimer = setTimeout(() => {
+      threadWriteTimer = undefined;
+      writeThreads();
+      // Sample again while anything is still streaming; settling rewrites the
+      // last version through the change listener.
+      if (manager.list().some((sub) => sub.status === "running")) {
+        scheduleThreadWrite();
+      }
+    }, THREAD_WRITE_MS);
   };
 
   const dashboardBlocks = (): DeclarativeBlock[] => {
@@ -537,6 +591,7 @@ export default function (pi: ExtensionAPI) {
     updateStatus();
     publishDeclarativeViews();
     scheduleStateWrite();
+    scheduleThreadWrite();
   });
 
   const deliverResult = (sub: Subagent) => {
@@ -578,8 +633,14 @@ export default function (pi: ExtensionAPI) {
     closeDeclarativeViews();
     if (stateWriteTimer) clearTimeout(stateWriteTimer);
     stateWriteTimer = undefined;
+    if (threadWriteTimer) clearTimeout(threadWriteTimer);
+    threadWriteTimer = undefined;
+    threadSignatures.clear();
     const sessionId = sessionContext?.sessionManager.getSessionId();
-    if (sessionId) writeSubagentState(sessionId, []);
+    if (sessionId) {
+      writeSubagentState(sessionId, []);
+      removeSubagentThreads(sessionId);
+    }
     sessionContext = undefined;
     resultDelivery.clear();
     ui?.setStatus("subagents", undefined);

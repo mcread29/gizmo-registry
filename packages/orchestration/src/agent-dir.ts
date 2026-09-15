@@ -30,6 +30,11 @@ export function subagentStateDir(agentDir = resolveAgentDir()): string {
   return join(agentDir, "subagents", "state");
 }
 
+/** Directory where the subagents extension writes per-subagent transcripts. */
+export function subagentThreadDir(agentDir = resolveAgentDir()): string {
+  return join(agentDir, "subagents", "threads");
+}
+
 /** Directory where workflow runs persist their artifacts. */
 export function workflowRunsDir(agentDir = resolveAgentDir()): string {
   return join(agentDir, "workflows");

@@ -6,7 +6,11 @@
  * state snapshots the Pi extension writes (see ../state.ts).
  */
 
-import { readMergedSubagentState } from "../state.ts";
+import {
+  readMergedSubagentState,
+  readSubagentThread,
+  type SubagentThreadMessage,
+} from "../state.ts";
 
 /** Mirrors Gizmo's `ExtensionDescriptor` without importing `@gizmo/protocol`. */
 interface ExtensionDescriptor {
@@ -24,6 +28,7 @@ interface ExtensionDescriptor {
 
 const OPERATIONS = [
   { id: "snapshot", mutates: false, requiresConfirmation: false },
+  { id: "thread", mutates: false, requiresConfirmation: false },
 ] as const;
 
 function descriptor(): ExtensionDescriptor {
@@ -43,6 +48,41 @@ function sessionIdOf(input: unknown): string | undefined {
   return typeof sessionId === "string" && sessionId ? sessionId : undefined;
 }
 
+function idOf(input: unknown): string | undefined {
+  if (typeof input !== "object" || input === null) return undefined;
+  const { id } = input as { id?: unknown };
+  return typeof id === "string" && id ? id : undefined;
+}
+
+/**
+ * One subagent's transcript. Refuses ids that do not belong to a session this
+ * workspace can see, so a thread cannot be read across workspaces.
+ */
+function readThread(
+  workspacePath: string,
+  input: unknown,
+): {
+  id: string;
+  updatedAt: number;
+  messages: SubagentThreadMessage[];
+} {
+  const sessionId = sessionIdOf(input);
+  const id = idOf(input);
+  if (!sessionId || !id) {
+    throw new Error("thread requires sessionId and id");
+  }
+  const visible = readMergedSubagentState({ workspacePath, sessionId });
+  if (!visible.subagents.some((entry) => entry.id === id)) {
+    throw new Error(`Unknown subagent id: ${id}`);
+  }
+  const thread = readSubagentThread(sessionId, id);
+  return {
+    id,
+    updatedAt: thread?.updatedAt ?? 0,
+    messages: thread?.messages ?? [],
+  };
+}
+
 export const gizmoExtension = {
   id: "subagents",
   name: "Subagents",
@@ -57,6 +97,9 @@ export const gizmoExtension = {
   ): Promise<unknown> {
     if (extensionId !== "subagents") {
       throw new Error(`Extension is not installed: ${extensionId}`);
+    }
+    if (operationId === "thread") {
+      return readThread(workspacePath, input);
     }
     if (operationId !== "snapshot") {
       throw new Error(

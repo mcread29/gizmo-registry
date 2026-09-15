@@ -4,8 +4,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import {
   readMergedSubagentState,
+  readSubagentThread,
+  removeSubagentThreads,
   stateFilePath,
+  threadFilePath,
   writeSubagentState,
+  writeSubagentThread,
   type SubagentStateEntry,
 } from "./state.ts";
 
@@ -88,6 +92,42 @@ test("state left behind by a dead process is dropped and deleted", () => {
   expect(merged.subagents.map((sub) => sub.key)).toEqual(["live:sa-1"]);
   expect(existsSync(stateFilePath("dead", agentDir))).toBe(false);
   expect(existsSync(stateFilePath("live", agentDir))).toBe(true);
+});
+
+test("a transcript round-trips and keeps the newest messages", () => {
+  writeSubagentThread(
+    "session-a",
+    "sa-1",
+    [
+      { role: "user", text: "first" },
+      { role: "assistant", text: "second" },
+    ],
+    { agentDir },
+  );
+
+  const thread = readSubagentThread("session-a", "sa-1", agentDir);
+
+  expect(thread?.messages).toEqual([
+    { role: "user", text: "first" },
+    { role: "assistant", text: "second" },
+  ]);
+  expect(thread?.sessionId).toBe("session-a");
+});
+
+test("one session's transcripts are removed without touching another's", () => {
+  writeSubagentThread("session-a", "sa-1", [{ role: "user", text: "a" }], {
+    agentDir,
+  });
+  writeSubagentThread("session-b", "sa-1", [{ role: "user", text: "b" }], {
+    agentDir,
+  });
+
+  removeSubagentThreads("session-a", agentDir);
+
+  expect(existsSync(threadFilePath("session-a", "sa-1", agentDir))).toBe(false);
+  expect(readSubagentThread("session-b", "sa-1", agentDir)?.messages).toEqual([
+    { role: "user", text: "b" },
+  ]);
 });
 
 test("an empty write removes the session's file", () => {

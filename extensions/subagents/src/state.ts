@@ -14,6 +14,7 @@ import { join, resolve } from "node:path";
 import {
   readJsonFile,
   subagentStateDir,
+  subagentThreadDir,
 } from "../../../packages/orchestration/src/agent-dir.ts";
 
 export type SubagentStateStatus = "running" | "done" | "error";
@@ -56,6 +57,24 @@ export interface SubagentStateFile {
   pid?: number;
 }
 
+/**
+ * One message of a subagent's transcript, as served to the web UI. Roles are
+ * Pi's own (`user`, `assistant`, `toolResult`, ...); tool calls read as
+ * `[tool] name` so the thread stays readable without tool schemas.
+ */
+export interface SubagentThreadMessage {
+  role: string;
+  text: string;
+}
+
+/** One subagent's transcript, written by the Pi side and read by the server. */
+export interface SubagentThreadFile {
+  sessionId: string;
+  id: string;
+  updatedAt: number;
+  messages: SubagentThreadMessage[];
+}
+
 export interface WriteSubagentStateOptions {
   agentDir?: string;
   workspacePath?: string;
@@ -74,6 +93,9 @@ export interface ReadMergedOptions {
 
 const OUTPUT_PREVIEW_BYTES = 2_048;
 const PROMPT_PREVIEW_LENGTH = 240;
+/** Messages kept per transcript; the newest survive. */
+const THREAD_MESSAGE_LIMIT = 200;
+const THREAD_TEXT_LIMIT = 8_000;
 
 export function stateFilePath(sessionId: string, agentDir?: string): string {
   return join(subagentStateDir(agentDir), `${sessionId}.json`);
@@ -224,6 +246,98 @@ export function writeSubagentState(
   } catch {
     // State persistence is a UI affordance, never a tool error.
   }
+}
+
+/**
+ * Path of one subagent's transcript. Session id and subagent id are joined
+ * with a character neither can contain, so both stay recoverable from a
+ * filename during cleanup.
+ */
+export function threadFilePath(
+  sessionId: string,
+  id: string,
+  agentDir?: string,
+): string {
+  return join(subagentThreadDir(agentDir), `${sessionId}__${id}.json`);
+}
+
+/**
+ * Writes one subagent's transcript. Like the state snapshot, this is a UI
+ * affordance: every failure is swallowed.
+ */
+export function writeSubagentThread(
+  sessionId: string,
+  id: string,
+  messages: SubagentThreadMessage[],
+  options: { agentDir?: string } = {},
+): void {
+  const dir = subagentThreadDir(options.agentDir);
+  const kept = messages.slice(-THREAD_MESSAGE_LIMIT).map((message) => ({
+    role: message.role,
+    text:
+      message.text.length > THREAD_TEXT_LIMIT
+        ? `…${message.text.slice(-THREAD_TEXT_LIMIT)}`
+        : message.text,
+  }));
+  const payload: SubagentThreadFile = {
+    sessionId,
+    id,
+    updatedAt: Date.now(),
+    messages: kept,
+  };
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      threadFilePath(sessionId, id, options.agentDir),
+      JSON.stringify(payload),
+      "utf8",
+    );
+  } catch {
+    // Transcript persistence is a UI affordance, never a tool error.
+  }
+}
+
+/** Reads one subagent's transcript, or undefined when absent/corrupt. */
+export function readSubagentThread(
+  sessionId: string,
+  id: string,
+  agentDir?: string,
+): SubagentThreadFile | undefined {
+  const value = readJsonFile(threadFilePath(sessionId, id, agentDir));
+  return isThreadFile(value) ? value : undefined;
+}
+
+/** Drops every transcript belonging to one parent session. */
+export function removeSubagentThreads(
+  sessionId: string,
+  agentDir?: string,
+): void {
+  const dir = subagentThreadDir(agentDir);
+  let names: string[] = [];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.startsWith(`${sessionId}__`)) continue;
+    try {
+      rmSync(join(dir, name), { force: true });
+    } catch {
+      // Best-effort cleanup.
+    }
+  }
+}
+
+function isThreadFile(value: unknown): value is SubagentThreadFile {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Partial<SubagentThreadFile>;
+  return (
+    typeof candidate.sessionId === "string" &&
+    typeof candidate.id === "string" &&
+    typeof candidate.updatedAt === "number" &&
+    Array.isArray(candidate.messages)
+  );
 }
 
 /** Truncates from the start so the tail (the newest output) survives. */
