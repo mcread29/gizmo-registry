@@ -15,7 +15,6 @@
 		Upload,
 	} from '@lucide/svelte';
 	import type { GitFileStatus } from '@gizmo/protocol';
-	import { SvelteSet } from 'svelte/reactivity';
 	import type { GitHostStore } from './host';
 	import type { GitPushState } from '../push';
 	import {
@@ -49,9 +48,14 @@
 		new Map(statuses.map((status) => [normalize(projectFile(status)), status])),
 	);
 	let files = $derived(filesFor(statuses));
-	const collapsedFolders = new SvelteSet<string>();
-	const collapsedGroups = new SvelteSet<string>();
-	const expanded = new SvelteSet<string>();
+	// Plain sets, replaced wholesale on every toggle. SvelteSet comes from
+	// svelte/reactivity, which this bundle carries its own copy of; its
+	// mutations land in a reactivity graph the host's Svelte never reads, so
+	// collapsing silently did nothing. Swapping the instance keeps the state
+	// in the component's own graph, which the host does track.
+	let collapsedFolders = $state.raw(new Set<string>());
+	let collapsedGroups = $state.raw(new Set<string>());
+	let expanded = $state.raw(new Set<string>());
 	let groups = $derived.by(() =>
 		[
 			{
@@ -205,17 +209,21 @@
 	}
 
 	function toggle(group: string, file: string) {
-		const key = groupKey(group, file);
-		if (!expanded.delete(key)) expanded.add(key);
+		expanded = toggleKey(expanded, groupKey(group, file));
 	}
 
 	function toggleFolder(group: string, path: string) {
-		const key = groupKey(group, path);
-		if (!collapsedFolders.delete(key)) collapsedFolders.add(key);
+		collapsedFolders = toggleKey(collapsedFolders, groupKey(group, path));
 	}
 
 	function toggleGroup(group: string) {
-		if (!collapsedGroups.delete(group)) collapsedGroups.add(group);
+		collapsedGroups = toggleKey(collapsedGroups, group);
+	}
+
+	function toggleKey(set: Set<string>, key: string): Set<string> {
+		const next = new Set(set);
+		if (!next.delete(key)) next.add(key);
+		return next;
 	}
 
 	function stageActionLabel(group: string, updating: boolean) {

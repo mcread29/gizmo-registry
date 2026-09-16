@@ -59,6 +59,50 @@ describe("ChangesPanel", () => {
     unmount();
   });
 
+  it("collapses and reopens a folder inside a group", async () => {
+    const store = {
+      messages: [],
+      gitStatus: {
+        rootPath: "/projects/game",
+        branch: "main",
+        clean: false,
+        files: [
+          { path: "Assets/Scripts/Player.cs", index: " ", workingTree: "M" },
+          { path: "README.md", index: " ", workingTree: "M" },
+        ],
+      },
+      gitLoading: false,
+      gitCommitting: false,
+      refreshGitStatus: vi.fn(async () => {}),
+      generateCommitMessage: vi.fn(async () => "Update player movement"),
+      commitAll: vi.fn(async () => ({
+        rootPath: "/projects/game",
+        commit: "0123456789abcdef",
+        message: "Update player movement",
+      })),
+      revertFile: vi.fn(async () => {}),
+      invokeProjectExtension: vi.fn(async () => ({})),
+    } satisfies GitHostStore;
+
+    const { getByText, queryByText, unmount } = render(ChangesPanel, {
+      store,
+      projectPath: "/projects/game",
+      stageFile: vi.fn(async () => {}),
+      unstageFile: vi.fn(async () => {}),
+    });
+
+    await fireEvent.click(getByText("Assets"));
+    expect(queryByText("Scripts")).not.toBeInTheDocument();
+    expect(queryByText("Player.cs")).not.toBeInTheDocument();
+    // Sibling rows outside the folder stay put.
+    expect(getByText("README.md")).toBeInTheDocument();
+
+    await fireEvent.click(getByText("Assets"));
+    expect(getByText("Scripts")).toBeInTheDocument();
+    expect(getByText("Player.cs")).toBeInTheDocument();
+    unmount();
+  });
+
   it("lets the user review Pi’s message before committing everything", async () => {
     const generateCommitMessage = vi.fn(async () => "Update player movement");
     const commitAll = vi.fn(async (message: string) => ({
