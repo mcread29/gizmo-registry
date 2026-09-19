@@ -8,5 +8,10 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["extensions/**/*.ts", "extensions/**/*.svelte", "scripts/**/*.ts"]
+  "include": [
+    "extensions/**/*.ts",
+    "extensions/**/*.svelte",
+    "scripts/**/*.ts"
+  ],
+  "exclude": ["extensions/*/skills/**"]
 }

@@ -23,9 +23,19 @@
       "description": "Show OpenAI Codex usage and rate limits in the titlebar and a usage panel"
     },
     {
+      "id": "matt-pocock-skills",
+      "name": "Matt Pocock Skills",
+      "description": "Matt Pocock's engineering, productivity, and writing skills (skills only)"
+    },
+    {
       "id": "skill-authoring",
       "name": "Skill Authoring",
       "description": "Skills for creating effective Pi skills and agent guidance"
+    },
+    {
+      "id": "pstack",
+      "name": "pstack",
+      "description": "The pstack skill set: principles, verification, and workflow skills (skills only)"
     },
     {
       "id": "svelte",
