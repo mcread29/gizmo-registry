@@ -18,3 +18,27 @@ it("keeps file identity when polling adds or removes earlier files", () => {
     }),
   ).toBeDefined();
 });
+
+it("gives a folder the directory it stands for and the verbs that take one", () => {
+  const nodes = changeTree(
+    [{ path: "src/deep/a.ts", index: " ", workingTree: "M" }],
+    "unstaged",
+    ["stage", "revert"],
+  );
+
+  expect(nodes[0]).toMatchObject({
+    label: "src",
+    path: "src",
+    actions: ["stage", "revert"],
+  });
+  const leaf = nodes[0].children?.[0].children?.[0];
+  expect(leaf).toMatchObject({ path: "src/deep/a.ts" });
+  // A file carries every verb, so it names none of them.
+  expect(leaf?.actions).toBeUndefined();
+  expect(
+    parseView({
+      title: "Changes",
+      blocks: [{ type: "tree", id: "changes", nodes }],
+    }),
+  ).toBeDefined();
+});

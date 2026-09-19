@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -17,6 +17,9 @@ describe("GitService", () => {
     await git(directory, ["init", "-b", "main"]);
     await git(directory, ["config", "user.name", "Gizmo Test"]);
     await git(directory, ["config", "user.email", "gizmo@example.test"]);
+    // Whatever this machine's global setting is, a checkout here has to come
+    // back byte for byte or the assertions below are about line endings.
+    await git(directory, ["config", "core.autocrlf", "false"]);
     await writeFile(join(directory, "tracked.txt"), "before\n");
     await git(directory, ["add", "--all"]);
     await git(directory, ["commit", "-m", "Initial commit"]);
@@ -100,6 +103,27 @@ describe("GitService", () => {
     await expect(
       service.discardFile(directory, "../outside.txt"),
     ).rejects.toThrow("Select a changed file");
+  });
+
+  it("discards every change under a directory", async () => {
+    const service = new GitService();
+    await mkdir(join(directory, "src", "deep"), { recursive: true });
+    await writeFile(join(directory, "src", "committed.txt"), "before\n");
+    await service.commitAll(directory, "Add a directory");
+    await writeFile(join(directory, "src", "committed.txt"), "changed\n");
+    await writeFile(join(directory, "src", "deep", "untracked.txt"), "new\n");
+    await writeFile(join(directory, "src", "added.txt"), "added\n");
+    await service.stageFile(directory, "src/added.txt");
+    await writeFile(join(directory, "outside.txt"), "keep\n");
+
+    await service.discardFile(directory, "src");
+
+    expect(await readFile(join(directory, "src/committed.txt"), "utf8")).toBe(
+      "before\n",
+    );
+    expect(
+      (await service.status(directory)).files.map(({ path }) => path),
+    ).toEqual(["outside.txt"]);
   });
 
   it("treats selected paths literally instead of as Git pathspec patterns", async () => {

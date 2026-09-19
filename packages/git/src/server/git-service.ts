@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { GitCommitResult, GitFileStatus, GitStatus } from "./git-types";
+import { underPath } from "./paths";
 import type { GitPushResult, GitPushState } from "../push";
 
 const execFileAsync = promisify(execFile);
@@ -33,7 +34,44 @@ export class GitService {
       ["diff", "HEAD", "--no-ext-diff", "--unified=3", "--", file],
       signal,
     );
-    return { file, diff: stdout };
+    // An untracked file is in no diff git can take against HEAD, so rather
+    // than show the reader nothing, read it as one long addition.
+    if (stdout.trim()) return { file, diff: stdout };
+    return { file, diff: await this.#addedDiff(rootPath, file, signal) };
+  }
+
+  /**
+   * `--no-index` compares two paths without consulting the index, so a file
+   * against `/dev/null` reads as the whole of it added. It exits 1 when the
+   * two differ, which is the ordinary case here rather than a failure, and
+   * the diff it printed is on stdout either way.
+   */
+  async #addedDiff(rootPath: string, file: string, signal?: AbortSignal) {
+    const args = [
+      "--literal-pathspecs",
+      "diff",
+      "--no-index",
+      "--no-ext-diff",
+      "--unified=3",
+      "--",
+      "/dev/null",
+      file,
+    ];
+    try {
+      const { stdout } = await execFileAsync("git", args, {
+        cwd: rootPath,
+        encoding: "utf8",
+        maxBuffer: maxGitOutput,
+        ...(signal ? { signal } : {}),
+      });
+      return stdout;
+    } catch (error) {
+      const stdout =
+        typeof error === "object" && error && "stdout" in error
+          ? error.stdout
+          : "";
+      return typeof stdout === "string" ? stdout : "";
+    }
   }
 
   async commitContext(
@@ -143,26 +181,46 @@ export class GitService {
    * from HEAD (index and working tree both), an untracked one is deleted,
    * which is what "revert this change" means for a file git never saw.
    */
+  /**
+   * Throws away the uncommitted changes under a path. That path may be a
+   * directory — the tree's folder rows act on everything beneath them — so
+   * the work is done per changed file: a file git has never committed is
+   * deleted, and one it has is restored from HEAD.
+   */
   async discardFile(projectPath: string, path: string): Promise<void> {
     const rootPath = await this.#root(projectPath);
     const status = await this.status(rootPath);
-    const file = status.files.find((entry) => entry.path === path);
-    if (!file) throw new Error("Select a changed file");
-    if (file.index === "?" || file.index === "A") {
-      if (file.index === "A") {
-        await this.#git(rootPath, ["rm", "--cached", "--force", "--", path]);
-      }
-      await rm(resolve(rootPath, path), { force: true });
-      return;
+    const files = status.files.filter((entry) => underPath(entry.path, path));
+    if (!files.length) throw new Error("Select a changed file");
+
+    const isNew = (file: GitFileStatus) =>
+      file.index === "?" || file.index === "A";
+    const added = files.filter((file) => isNew(file));
+    const cached = added
+      .filter((file) => file.index === "A")
+      .map((file) => file.path);
+    if (cached.length) {
+      await this.#git(rootPath, ["rm", "--cached", "--force", "--", ...cached]);
     }
-    const paths = file.originalPath ? [file.originalPath, path] : [path];
+    for (const file of added) {
+      await rm(resolve(rootPath, file.path), { force: true });
+    }
+
+    // A rename is discarded by restoring both names: the one HEAD knows and
+    // the one the working tree invented.
+    const restore = files
+      .filter((file) => !isNew(file))
+      .flatMap((file) =>
+        file.originalPath ? [file.originalPath, file.path] : [file.path],
+      );
+    if (!restore.length) return;
     await this.#git(rootPath, [
       "restore",
       "--source=HEAD",
       "--staged",
       "--worktree",
       "--",
-      ...paths,
+      ...restore,
     ]);
   }
 
