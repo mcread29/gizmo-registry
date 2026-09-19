@@ -1,117 +1,60 @@
 /**
- * Gizmo agent-server integration for the subagents extension.
+ * Gizmo integration for the subagents extension.
  *
  * Loaded in the agent-server process (not Pi's), so it cannot see the live
- * SubagentManager. It answers web `list`/`invoke` calls from the per-session
- * state snapshots the Pi extension writes (see ../state.ts).
+ * SubagentManager: the view reads the per-session state snapshots the Pi
+ * extension writes (see ../state.ts). Read-only by design — steering and
+ * cancellation belong to the process that owns the subagents.
  */
 
-import {
-  readMergedSubagentState,
-  readSubagentThread,
-  type SubagentThreadMessage,
-} from "../state.ts";
+import { defineExtension } from "@gizmo/extension-api";
+import { openSubagentsView } from "./view.ts";
 
-/** Mirrors Gizmo's `ExtensionDescriptor` without importing `@gizmo/protocol`. */
-interface ExtensionDescriptor {
-  id: string;
-  name: string;
-  version: string;
-  apiVersion: number;
-  capabilities: string[];
-  operations: Array<{
-    id: string;
-    mutates: boolean;
-    requiresConfirmation: boolean;
-  }>;
-}
-
-const OPERATIONS = [
-  { id: "snapshot", mutates: false, requiresConfirmation: false },
-  { id: "thread", mutates: false, requiresConfirmation: false },
-] as const;
-
-function descriptor(): ExtensionDescriptor {
-  return {
-    id: "subagents",
-    name: "Subagents",
-    version: "1.0.0",
-    apiVersion: 1,
-    capabilities: [],
-    operations: OPERATIONS.map((operation) => ({ ...operation })),
-  };
-}
-
-function sessionIdOf(input: unknown): string | undefined {
-  if (typeof input !== "object" || input === null) return undefined;
-  const { sessionId } = input as { sessionId?: unknown };
-  return typeof sessionId === "string" && sessionId ? sessionId : undefined;
-}
-
-function idOf(input: unknown): string | undefined {
-  if (typeof input !== "object" || input === null) return undefined;
-  const { id } = input as { id?: unknown };
-  return typeof id === "string" && id ? id : undefined;
-}
-
-/**
- * One subagent's transcript. Refuses ids that do not belong to a session this
- * workspace can see, so a thread cannot be read across workspaces.
- */
-function readThread(
-  workspacePath: string,
-  input: unknown,
-): {
-  id: string;
-  updatedAt: number;
-  messages: SubagentThreadMessage[];
-} {
-  const sessionId = sessionIdOf(input);
-  const id = idOf(input);
-  if (!sessionId || !id) {
-    throw new Error("thread requires sessionId and id");
-  }
-  const visible = readMergedSubagentState({ workspacePath, sessionId });
-  if (!visible.subagents.some((entry) => entry.id === id)) {
-    throw new Error(`Unknown subagent id: ${id}`);
-  }
-  const thread = readSubagentThread(sessionId, id);
-  return {
-    id,
-    updatedAt: thread?.updatedAt ?? 0,
-    messages: thread?.messages ?? [],
-  };
-}
-
-export const gizmoExtension = {
+export const gizmoExtension = defineExtension({
   id: "subagents",
   name: "Subagents",
-  async list() {
-    return [descriptor()];
+  views: {
+    panel: {
+      label: "Subagents",
+      scope: "thread",
+      open: openSubagentsView,
+    },
   },
-  async invoke(
-    workspacePath: string,
-    extensionId: string,
-    operationId: string,
-    input?: unknown,
-  ): Promise<unknown> {
-    if (extensionId !== "subagents") {
-      throw new Error(`Extension is not installed: ${extensionId}`);
-    }
-    if (operationId === "thread") {
-      return readThread(workspacePath, input);
-    }
-    if (operationId !== "snapshot") {
-      throw new Error(
-        `Extension subagents does not expose operation: ${operationId}`,
-      );
-    }
-    // Scoped to the workspace and, when the panel says which, the open
-    // thread; other threads keep their own subagents to themselves.
-    const sessionId = sessionIdOf(input);
-    return readMergedSubagentState({
-      workspacePath,
-      ...(sessionId !== undefined ? { sessionId } : {}),
-    });
+  commands: () => [
+    {
+      id: "subagents.panel",
+      label: "Subagents: Show panel",
+      keywords: ["subagent", "background", "agents"],
+      icon: "users",
+      view: "panel",
+    },
+  ],
+  toolPresentation: {
+    labels: {
+      subagent_spawn: "Spawn subagent",
+      subagent_wait: "Wait for subagents",
+      subagent_cancel: "Cancel subagents",
+      subagent_check: "Check subagent",
+      subagent_list: "List subagents",
+    },
+    icons: {
+      subagent_spawn: "user-plus",
+      subagent_wait: "hourglass",
+      subagent_cancel: "circle-x",
+      subagent_check: "search",
+      subagent_list: "users",
+    },
+    parameters: {
+      subagent_spawn: [
+        "title",
+        "working_dir",
+        "model",
+        "provider",
+        "reasoning_effort",
+      ],
+      subagent_check: ["id"],
+    },
   },
-};
+});
+
+export { renderSubagentsView, openSubagentsView } from "./view.ts";

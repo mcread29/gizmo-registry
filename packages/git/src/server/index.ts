@@ -1,5 +1,3 @@
-import type { GizmoServerExtension } from "@gizmo/extensions";
-import { gizmoExtension as extension } from "./git-extension";
-
-export { extension as gizmoExtension };
+export { gizmoExtension } from "./git-extension";
 export { GitService } from "./git-service";
+export type { GitCommitResult, GitFileStatus, GitStatus } from "./git-types";

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -71,6 +71,62 @@ describe("GitService", () => {
       files: expect.arrayContaining([
         { path: "tracked.txt", index: " ", workingTree: "M" },
       ]),
+    });
+  });
+
+  it("discards tracked, untracked, and newly staged files without touching other files", async () => {
+    const service = new GitService();
+    await writeFile(join(directory, "tracked.txt"), "changed\n");
+    await service.stageFile(directory, "tracked.txt");
+    await writeFile(join(directory, "new.txt"), "new\n");
+    await service.stageFile(directory, "new.txt");
+    await writeFile(join(directory, "untracked.txt"), "new\n");
+    await writeFile(join(directory, "keep.txt"), "keep\n");
+    for (const file of ["tracked.txt", "new.txt", "untracked.txt"]) {
+      await service.discardFile(directory, file);
+    }
+    expect(await readFile(join(directory, "tracked.txt"), "utf8")).toBe(
+      "before\n",
+    );
+    expect(
+      (await service.status(directory)).files.map(({ path }) => path),
+    ).toEqual(["keep.txt"]);
+    await expect(readFile(join(directory, "new.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(
+      readFile(join(directory, "untracked.txt")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      service.discardFile(directory, "../outside.txt"),
+    ).rejects.toThrow("Select a changed file");
+  });
+
+  it("treats selected paths literally instead of as Git pathspec patterns", async () => {
+    const service = new GitService();
+    await writeFile(join(directory, "[ab].txt"), "original\n");
+    await writeFile(join(directory, "a.txt"), "original\n");
+    await service.commitAll(directory, "Add literal paths");
+    await writeFile(join(directory, "[ab].txt"), "changed\n");
+    await writeFile(join(directory, "a.txt"), "keep\n");
+    await service.discardFile(directory, "[ab].txt");
+    expect(await readFile(join(directory, "[ab].txt"), "utf8")).toBe(
+      "original\n",
+    );
+    expect(await readFile(join(directory, "a.txt"), "utf8")).toBe("keep\n");
+  });
+
+  it("discards a newly staged file before the first commit", async () => {
+    const empty = await mkdtemp(join(tmpdir(), "gizmo-git-empty-"));
+    remotes.push(empty);
+    await git(empty, ["init", "-b", "main"]);
+    await writeFile(join(empty, "new.txt"), "new\n");
+    const service = new GitService();
+    await service.stageFile(empty, "new.txt");
+    await service.discardFile(empty, "new.txt");
+    expect((await service.status(empty)).clean).toBe(true);
+    await expect(readFile(join(empty, "new.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
     });
   });
 

@@ -70,6 +70,7 @@ import {
   type TranscriptEntry,
   type WorkflowDetails,
 } from "./src/model.ts";
+import { workflowCard } from "./src/tool-card.ts";
 import {
   createWorkflowResources,
   runAgent,
@@ -187,20 +188,6 @@ function resultText(details: WorkflowDetails, runDir: string): string {
 
 function writeRunFile(runDir: string, name: string, content: string) {
   writeFileAtomic(path.join(runDir, name), content);
-}
-
-function compactToolDetails(details: WorkflowDetails): WorkflowDetails {
-  return {
-    ...details,
-    ...(details.result !== undefined
-      ? {
-          result: JSON.parse(
-            safeStringify(details.result, { maxBytes: 64 * 1024 }),
-          ),
-        }
-      : {}),
-    agents: details.agents.map((agent) => ({ ...agent, transcript: [] })),
-  };
 }
 
 function boundedArtifactTranscript(transcript: TranscriptEntry[]) {
@@ -1051,7 +1038,7 @@ export default function workflows(pi: ExtensionAPI) {
         if (background) return;
         onUpdate?.({
           content: [{ type: "text", text: summaryLine(details) }],
-          details: compactToolDetails(details),
+          details: workflowCard(details),
         });
       };
       const emit = () => {
@@ -1329,7 +1316,7 @@ export default function workflows(pi: ExtensionAPI) {
               ].join("\n"),
             },
           ],
-          details: compactToolDetails(details),
+          details: workflowCard(details),
         };
       }
 
@@ -1348,7 +1335,7 @@ export default function workflows(pi: ExtensionAPI) {
       }
       return {
         content: [{ type: "text", text: resultText(details, runDir) }],
-        details: compactToolDetails(details),
+        details: workflowCard(details),
       };
     },
 

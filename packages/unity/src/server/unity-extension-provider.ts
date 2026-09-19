@@ -1,4 +1,4 @@
-import type { ExtensionDescriptor } from "./contracts";
+import type { ExtensionDescriptor } from "@gizmo/extension-api";
 import {
   invokeUnityExtension,
   listUnityCommands,

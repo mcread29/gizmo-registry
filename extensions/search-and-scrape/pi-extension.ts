@@ -11,13 +11,32 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
+import { defineExtension } from "@gizmo/extension-api";
+import {
+  errorCard,
+  scrapeCard,
+  searchCard,
+  type SearchHit,
+} from "./src/result-cards.ts";
 
 /**
  * Registers the extension with Gizmo's host so it appears under Settings →
- * Extensions with an enable/disable toggle. It exposes no live operations:
- * search and scrape are stateless tools, and the web side is presentation-only.
+ * Extensions with an enable/disable toggle. It contributes no views: search
+ * and scrape are stateless tools whose results are rendered as cards from the
+ * tool result itself.
  */
-export const gizmoExtension = { id: "search-and-scrape", name: "Search & Scrape" };
+export const gizmoExtension = defineExtension({
+  id: "search-and-scrape",
+  name: "Search & Scrape",
+  toolPresentation: {
+    labels: { search: "Search", scrape: "Scrape" },
+    icons: { search: "search", scrape: "file-text" },
+    parameters: {
+      search: ["query", "limit", "source"],
+      scrape: ["url", "onlyMainContent", "waitFor", "timeout"],
+    },
+  },
+});
 
 const PI_ENV_PATH = join(homedir(), ".pi", "agent", ".env");
 const MAX_ERROR_BODY_BYTES = 4_096;
@@ -241,7 +260,12 @@ export default function (pi: ExtensionAPI) {
 
         return {
           content: [{ type: "text", text: output.content }],
-          details: { ...normalized, full_output_path: output.fullOutputPath },
+          details: searchCard({
+            query: params.query,
+            results: results as SearchHit[],
+            numberOfResults: normalized.number_of_results,
+            searxngUrl: baseUrl,
+          }),
         };
       } catch (error) {
         const message = redactSecrets(asErrorMessage(error));
@@ -252,7 +276,7 @@ export default function (pi: ExtensionAPI) {
               text: `SearXNG search failed: ${message}`,
             },
           ],
-          details: { error: message },
+          details: errorCard("Search failed", message),
           isError: true,
         };
       }
@@ -365,13 +389,12 @@ export default function (pi: ExtensionAPI) {
 
         return {
           content: [{ type: "text", text: output.content }],
-          details: {
-            ...document,
-            markdown: undefined,
-            markdown_length: markdown.length,
-            markdown_preview: markdownPreview,
-            full_output_path: output.fullOutputPath,
-          },
+          details: scrapeCard({
+            url: typeof document.url === "string" ? document.url : params.url,
+            markdownLength: markdown.length,
+            markdownPreview: markdownPreview,
+            fullOutputPath: output.fullOutputPath,
+          }),
         };
       } catch (error) {
         const message = redactSecrets(asErrorMessage(error));
@@ -382,7 +405,7 @@ export default function (pi: ExtensionAPI) {
               text: `Crawl4AI scrape failed: ${message}`,
             },
           ],
-          details: { error: message },
+          details: errorCard("Scrape failed", message),
           isError: true,
         };
       }

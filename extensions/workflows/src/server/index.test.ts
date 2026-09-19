@@ -1,9 +1,10 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { parseView, type View } from "@gizmo/extension-api";
 import { workflowRunsDir } from "../../../../packages/orchestration/src/agent-dir.ts";
-import { effectiveStatus, gizmoExtension, listRuns } from "./index.ts";
+import { effectiveStatus, gizmoExtension, listRuns, readRun } from "./index.ts";
 
 let agentDir: string;
 
@@ -76,7 +77,7 @@ test("a running workflow whose heartbeat stopped is reported as aborted", () => 
   ).toBe("completed");
 });
 
-test("run rehydrates the stored result instead of the marker", async () => {
+test("run rehydrates the stored result instead of the marker", () => {
   writeRun(
     "wf_r1",
     {
@@ -87,14 +88,50 @@ test("run rehydrates the stored result instead of the marker", async () => {
     { "result.json": { confirmed: ["x"] } },
   );
 
-  const run = (await gizmoExtension.invoke(
-    workspace,
-    "workflows",
-    "run",
-    { runId: "wf_r1" },
-    undefined,
-    agentDir,
-  )) as { result: unknown };
+  expect(readRun("wf_r1", agentDir).result).toEqual({ confirmed: ["x"] });
+});
 
-  expect(run.result).toEqual({ confirmed: ["x"] });
+test("the view pushes a valid run list and clears its timer on dispose", async () => {
+  writeRun("wf_v1", {
+    sessionId: "thread-a",
+    cwd: workspace,
+    startedAt: 1,
+    name: "Review",
+    agents: [
+      { index: 0, label: "reader", state: "done", startedAt: 1, usage: {} },
+    ],
+  });
+  const previous = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  vi.useFakeTimers();
+  try {
+    const updates: View[] = [];
+    const handle = await gizmoExtension.views.panel.open({
+      workspacePath: workspace,
+      sessionId: "thread-a",
+      settings: {},
+      update: (view: View) => updates.push(view),
+    });
+    expect(updates).toHaveLength(1);
+    expect(parseView(updates[0])).toEqual(updates[0]);
+    expect(JSON.stringify(updates[0])).toContain("Review");
+    expect(vi.getTimerCount()).toBe(1);
+
+    const result = await handle.action?.({
+      actionId: "open-run",
+      selection: { blockId: "runs", itemId: "wf_v1" },
+      cancelled: false,
+    });
+    expect(result).toEqual({ status: "succeeded" });
+    const detail = updates.at(-1)!;
+    expect(parseView(detail)).toEqual(detail);
+    expect(JSON.stringify(detail)).toContain("reader");
+
+    await handle.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.useRealTimers();
+    if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previous;
+  }
 });

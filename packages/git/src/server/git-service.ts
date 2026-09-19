@@ -1,12 +1,10 @@
 import { execFile } from "node:child_process";
+import { rm } from "node:fs/promises";
+import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import type {
-  GitCommitResult,
-  GitFileStatus,
-  GitStatus,
-} from "@gizmo/protocol";
+import type { GitCommitResult, GitFileStatus, GitStatus } from "./git-types";
 import type { GitPushResult, GitPushState } from "../push";
 
 const execFileAsync = promisify(execFile);
@@ -140,6 +138,34 @@ export class GitService {
     }
   }
 
+  /**
+   * Throws away a file's uncommitted changes. A tracked file is restored
+   * from HEAD (index and working tree both), an untracked one is deleted,
+   * which is what "revert this change" means for a file git never saw.
+   */
+  async discardFile(projectPath: string, path: string): Promise<void> {
+    const rootPath = await this.#root(projectPath);
+    const status = await this.status(rootPath);
+    const file = status.files.find((entry) => entry.path === path);
+    if (!file) throw new Error("Select a changed file");
+    if (file.index === "?" || file.index === "A") {
+      if (file.index === "A") {
+        await this.#git(rootPath, ["rm", "--cached", "--force", "--", path]);
+      }
+      await rm(resolve(rootPath, path), { force: true });
+      return;
+    }
+    const paths = file.originalPath ? [file.originalPath, path] : [path];
+    await this.#git(rootPath, [
+      "restore",
+      "--source=HEAD",
+      "--staged",
+      "--worktree",
+      "--",
+      ...paths,
+    ]);
+  }
+
   async commitAll(
     projectPath: string,
     message: string,
@@ -228,7 +254,7 @@ export class GitService {
 
   async #git(cwd: string, args: string[], signal?: AbortSignal) {
     try {
-      return await execFileAsync("git", args, {
+      return await execFileAsync("git", ["--literal-pathspecs", ...args], {
         cwd,
         encoding: "utf8",
         maxBuffer: maxGitOutput,

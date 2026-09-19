@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+import { parseView, type View } from "@gizmo/extension-api";
 import type { OllamaClient } from "../shared/ollama-client.ts";
-import type { ManagedModel } from "../shared/types.ts";
-import { createOllamaExtension, InvalidInputError } from "./index.ts";
+import type { HostStatus, ManagedModel } from "../shared/types.ts";
+import {
+  createOllamaController,
+  createOllamaExtension,
+  InvalidInputError,
+} from "./index.ts";
 import { JobActiveError, JobRegistry } from "./jobs.ts";
 
 function stubClient(overrides: Partial<OllamaClient> = {}): OllamaClient {
@@ -28,6 +33,16 @@ const sampleModel: ManagedModel = {
   capabilities: ["completion", "thinking"],
 };
 
+const hostStatus: HostStatus = {
+  platform: "linux",
+  installed: true,
+  version: "0.5.7",
+  serverReachable: true,
+  serverVersion: "0.5.7",
+  latestVersion: "0.5.8",
+  updateAvailable: true,
+};
+
 function deferred<T = void>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((res) => {
@@ -36,93 +51,49 @@ function deferred<T = void>() {
   return { promise, resolve };
 }
 
-describe("ollama gizmoExtension", () => {
-  it("describes its operations", async () => {
-    const extension = createOllamaExtension({ client: stubClient() });
-    const [descriptor] = await extension.list!(
-      "/ws",
-      new AbortController().signal,
-    );
-    expect(descriptor.id).toBe("ollama");
-    expect(descriptor.apiVersion).toBe(1);
-    const ids = descriptor.operations.map((operation) => operation.id);
-    expect(ids).toContain("host.status");
-    expect(ids).toContain("models.remove");
-    const remove = descriptor.operations.find(
-      (operation) => operation.id === "models.remove",
-    );
-    expect(remove?.requiresConfirmation).toBe(true);
-  });
+function taggedSample() {
+  return {
+    name: sampleModel.name,
+    model: sampleModel.name,
+    size: sampleModel.size,
+    digest: sampleModel.digest,
+    modified_at: sampleModel.modifiedAt,
+    details: {
+      family: "qwen3",
+      families: null,
+      parameter_size: "8.2B",
+      quantization_level: "Q4_K_M",
+    },
+  };
+}
 
-  it("rejects foreign extension ids and unknown operations", async () => {
-    const extension = createOllamaExtension({ client: stubClient() });
-    await expect(
-      extension.invoke!("/ws", "other", "models.list", {}, undefined),
-    ).rejects.toThrow("Extension is not installed: other");
-    await expect(
-      extension.invoke!("/ws", "ollama", "nope", {}, undefined),
-    ).rejects.toThrow("does not expose operation: nope");
-  });
-
-  it("answers host.status from the detection seam", async () => {
-    const status = {
-      platform: "windows" as const,
-      installed: true,
-      version: "0.5.7",
-      serverReachable: true,
-      serverVersion: "0.5.7",
-      updateAvailable: false,
-    };
-    const extension = createOllamaExtension({
+describe("ollama controller", () => {
+  it("answers host status from the detection seam", async () => {
+    const controller = createOllamaController({
       client: stubClient(),
-      detectHost: async () => status,
+      detectHost: async () => hostStatus,
     });
-    await expect(
-      extension.invoke!("/ws", "ollama", "host.status", {}, undefined),
-    ).resolves.toEqual(status);
+    await expect(controller.status()).resolves.toEqual(hostStatus);
   });
 
   it("lists models", async () => {
     const client = stubClient();
-    const extension = createOllamaExtension({ client });
     (client.tags as ReturnType<typeof vi.fn>).mockResolvedValue([
-      {
-        name: sampleModel.name,
-        model: sampleModel.name,
-        size: sampleModel.size,
-        digest: sampleModel.digest,
-        modified_at: sampleModel.modifiedAt,
-        details: {
-          family: "qwen3",
-          families: null,
-          parameter_size: "8.2B",
-          quantization_level: "Q4_K_M",
-        },
-      },
+      taggedSample(),
     ]);
     (client.show as ReturnType<typeof vi.fn>).mockResolvedValue({
       capabilities: ["completion", "thinking"],
       model_info: { "qwen3.context_length": 40_960 },
     });
-    await expect(
-      extension.invoke!("/ws", "ollama", "models.list", {}, undefined),
-    ).resolves.toEqual({ models: [sampleModel] });
+    const controller = createOllamaController({ client });
+    await expect(controller.models()).resolves.toEqual([sampleModel]);
   });
 
-  it("validates model input", async () => {
-    const extension = createOllamaExtension({ client: stubClient() });
-    await expect(
-      extension.invoke!("/ws", "ollama", "models.remove", {}, undefined),
-    ).rejects.toThrow(InvalidInputError);
-    await expect(
-      extension.invoke!(
-        "/ws",
-        "ollama",
-        "models.remove",
-        { name: " " },
-        undefined,
-      ),
-    ).rejects.toThrow(InvalidInputError);
+  it("validates model and version input", () => {
+    const controller = createOllamaController({ client: stubClient() });
+    expect(() => controller.pull(" ")).toThrow(InvalidInputError);
+    expect(controller.remove(" ")).rejects.toThrow(InvalidInputError);
+    expect(() => controller.install("banana")).toThrow(InvalidInputError);
   });
 
   it("pulls a model and reports job progress", async () => {
@@ -134,45 +105,16 @@ describe("ollama gizmoExtension", () => {
     const client = stubClient({
       pull: pull as unknown as OllamaClient["pull"],
     });
-    const extension = createOllamaExtension({ client });
+    const controller = createOllamaController({ client });
 
-    const snapshot = (await extension.invoke!(
-      "/ws",
-      "ollama",
-      "models.pull",
-      { name: "qwen3:8b" },
-      undefined,
-    )) as { status: string; target: string };
+    const snapshot = controller.pull("qwen3:8b");
     expect(snapshot.status).toBe("running");
     expect(snapshot.target).toBe("qwen3:8b");
-
-    await vi.waitFor(() => {
-      expect((client.pull as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(
-        1,
-      );
-      return true;
-    });
-    await vi.waitFor(async () => {
-      const job = (await extension.invoke!(
-        "/ws",
-        "ollama",
-        "models.pullJob",
-        {},
-        undefined,
-      )) as { percent?: number };
-      expect(job.percent).toBe(40);
-    });
+    await vi.waitFor(() => expect(controller.pullJob()?.percent).toBe(40));
     gate.resolve();
-    await vi.waitFor(async () => {
-      const job = (await extension.invoke!(
-        "/ws",
-        "ollama",
-        "models.pullJob",
-        {},
-        undefined,
-      )) as { status: string };
-      expect(job.status).toBe("succeeded");
-    });
+    await vi.waitFor(() =>
+      expect(controller.pullJob()?.status).toBe("succeeded"),
+    );
   });
 
   it("refuses a second concurrent pull", async () => {
@@ -182,87 +124,97 @@ describe("ollama gizmoExtension", () => {
         await gate.promise;
       }) as unknown as OllamaClient["pull"],
     });
-    const extension = createOllamaExtension({ client });
-    await extension.invoke!(
-      "/ws",
-      "ollama",
-      "models.pull",
-      { name: "m" },
-      undefined,
-    );
-    await expect(
-      extension.invoke!(
-        "/ws",
-        "ollama",
-        "models.pull",
-        { name: "m2" },
-        undefined,
-      ),
-    ).rejects.toThrow(JobActiveError);
+    const controller = createOllamaController({ client });
+    controller.pull("m");
+    expect(() => controller.pull("m2")).toThrow(JobActiveError);
     gate.resolve();
   });
 
   it("cancels an active pull", async () => {
-    const registry = new JobRegistry();
     const client = stubClient({
       pull: vi.fn(async (_name, _progress, signal) => {
         await vi.waitFor(() => expect(signal?.aborted).toBe(true));
       }) as unknown as OllamaClient["pull"],
     });
-    const extension = createOllamaExtension({ client, jobs: registry });
-    await extension.invoke!(
-      "/ws",
-      "ollama",
-      "models.pull",
-      { name: "m" },
-      undefined,
-    );
-    await expect(
-      extension.invoke!("/ws", "ollama", "models.pullCancel", {}, undefined),
-    ).resolves.toEqual({ cancelled: true });
-    await vi.waitFor(async () => {
-      const job = (await extension.invoke!(
-        "/ws",
-        "ollama",
-        "models.pullJob",
-        {},
-        undefined,
-      )) as { status: string };
-      expect(job.status).toBe("cancelled");
+    const controller = createOllamaController({
+      client,
+      jobs: new JobRegistry(),
     });
+    controller.pull("m");
+    expect(controller.cancelPull()).toBe(true);
+    await vi.waitFor(() =>
+      expect(controller.pullJob()?.status).toBe("cancelled"),
+    );
   });
 
   it("removes a model", async () => {
     const client = stubClient();
-    const extension = createOllamaExtension({ client });
-    await expect(
-      extension.invoke!(
-        "/ws",
-        "ollama",
-        "models.remove",
-        { name: "qwen3:8b" },
-        undefined,
-      ),
-    ).resolves.toEqual({ removed: "qwen3:8b" });
+    const controller = createOllamaController({ client });
+    await expect(controller.remove("qwen3:8b")).resolves.toEqual({
+      removed: "qwen3:8b",
+    });
     expect(client.remove).toHaveBeenCalledWith(
       "qwen3:8b",
       expect.any(AbortSignal),
     );
   });
+});
 
-  it("validates version input for host jobs", async () => {
-    const extension = createOllamaExtension({ client: stubClient() });
-    await expect(
-      extension.invoke!("/ws", "ollama", "host.install", {}, undefined),
-    ).rejects.toThrow(InvalidInputError);
-    await expect(
-      extension.invoke!(
-        "/ws",
-        "ollama",
-        "host.install",
-        { version: "banana" },
-        undefined,
-      ),
-    ).rejects.toThrow(InvalidInputError);
+describe("ollama view", () => {
+  function fakeContext() {
+    const updates: View[] = [];
+    return {
+      updates,
+      context: {
+        workspacePath: "/ws",
+        settings: {},
+        update: (view: View) => updates.push(view),
+      },
+    };
+  }
+
+  it("pushes a valid view on open and clears its timer on dispose", async () => {
+    vi.useFakeTimers();
+    try {
+      const client = stubClient();
+      (client.tags as ReturnType<typeof vi.fn>).mockResolvedValue([
+        taggedSample(),
+      ]);
+      const extension = createOllamaExtension({
+        client,
+        detectHost: async () => hostStatus,
+      });
+      const { updates, context } = fakeContext();
+      const handle = await extension.views.models.open(context);
+      expect(updates).toHaveLength(1);
+      expect(parseView(updates[0])).toEqual(updates[0]);
+      expect(vi.getTimerCount()).toBe(1);
+      await vi.waitFor(() => expect(updates.length).toBeGreaterThan(1));
+      const loaded = updates.at(-1)!;
+      expect(parseView(loaded)).toEqual(loaded);
+      expect(JSON.stringify(loaded)).toContain("qwen3:8b");
+      await handle.dispose();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("removes the selected model through an action", async () => {
+    const client = stubClient();
+    const extension = createOllamaExtension({
+      client,
+      detectHost: async () => hostStatus,
+    });
+    const { context } = fakeContext();
+    const handle = await extension.views.models.open(context);
+    const result = await handle.action?.({
+      actionId: "remove",
+      selection: { blockId: "models", itemId: "qwen3:8b" },
+      cancelled: false,
+    });
+    expect(result?.status).toBe("succeeded");
+    expect(client.remove).toHaveBeenCalled();
+    await handle.dispose();
   });
 });

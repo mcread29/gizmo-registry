@@ -10,7 +10,7 @@ import {
   type UnityProject,
   type UnityStatusDetails,
 } from "../../../../unity-tools/src/index";
-import { revertPatch, type ProjectService } from "../contracts";
+import { revertPatch, type ProjectService } from "@gizmo/extension-api";
 
 export interface ProjectWatchListeners {
   status: (status: UnityStatusDetails) => void;

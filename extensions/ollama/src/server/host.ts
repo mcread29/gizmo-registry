@@ -18,7 +18,7 @@
 import { spawn } from "node:child_process";
 import { access, mkdir, open, rm, writeFile } from "node:fs/promises";
 import { homedir, platform as nodePlatform, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { JobHandle } from "./jobs.ts";
@@ -111,7 +111,7 @@ export function binaryCandidates(platform: HostPlatform): string[] {
   switch (platform) {
     case "windows":
       return [
-        join(
+        win32.join(
           process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"),
           "Programs",
           "Ollama",

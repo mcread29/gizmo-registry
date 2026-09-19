@@ -4,8 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./server": "./src/server/index.ts",
-    "./web": "./src/web/index.ts"
+    "./server": "./src/server/index.ts"
   },
   "scripts": {
     "check": "tsc -p tsconfig.json",
@@ -13,22 +12,11 @@
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.84.4",
-    "@gizmo/extensions": "workspace:*",
-    "@gizmo/protocol": "workspace:*",
-    "typebox": "^1.3.14",
-    "@gizmo/design": "workspace:*",
-    "@gizmo/ui": "workspace:*",
-    "@lucide/svelte": "^1.31.0",
-    "svelte": "latest"
+    "typebox": "^1.3.14"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.11",
-    "@sveltejs/vite-plugin-svelte": "latest",
-    "@testing-library/jest-dom": "latest",
-    "@testing-library/svelte": "latest",
-    "jsdom": "latest",
-    "vite": "latest"
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
   }
 }

@@ -1,20 +1,18 @@
 /**
- * Gizmo agent-server integration for the Ollama extension.
+ * Gizmo integration for the Ollama extension.
  *
- * Answers the web UI's management operations: host detection and
- * install/update (driven through the job registry), model listing, pulling,
- * and removal — all against the local Ollama REST API. Ollama is
- * machine-global, so the workspace path is ignored here.
+ * Owns the local Ollama host and its models: detection, install/update
+ * (through the job registry), listing, pulling, and removal against the
+ * local Ollama REST API. Ollama is machine-global, so the workspace path is
+ * ignored here. The Ollama view polls this controller in-process; the
+ * browser only receives rendered views.
  */
 
+import { defineExtension } from "@gizmo/extension-api";
 import { createOllamaClient } from "../shared/ollama-client.ts";
 import type { OllamaClient } from "../shared/ollama-client.ts";
 import { listManagedModels } from "../shared/models.ts";
-import type {
-  HostStatus,
-  JobSnapshot,
-  OllamaOperation,
-} from "../shared/types.ts";
+import type { HostStatus, JobSnapshot } from "../shared/types.ts";
 import {
   fetchLatestVersion,
   hostPlatform,
@@ -24,65 +22,7 @@ import {
   resolveOllamaBinary,
 } from "./host.ts";
 import { JobRegistry } from "./jobs.ts";
-
-/** Mirrors Gizmo's `ExtensionDescriptor` without importing `@gizmo/protocol`. */
-interface ExtensionDescriptor {
-  id: string;
-  name: string;
-  version: string;
-  apiVersion: number;
-  capabilities: string[];
-  operations: Array<{
-    id: string;
-    mutates: boolean;
-    requiresConfirmation: boolean;
-  }>;
-}
-
-/** Mirrors Gizmo's `GizmoServerExtension` without importing `@gizmo/extensions`. */
-interface GizmoServerExtension {
-  id: string;
-  name: string;
-  list?(
-    workspacePath: string,
-    signal: AbortSignal,
-  ): Promise<ExtensionDescriptor[]>;
-  invoke?(
-    workspacePath: string,
-    extensionId: string,
-    operationId: string,
-    input: unknown,
-    signal?: AbortSignal,
-  ): Promise<unknown>;
-}
-
-const apiVersion = 1;
-
-const operations: OllamaOperation[] = [
-  { id: "host.status", mutates: false, requiresConfirmation: false },
-  { id: "host.install", mutates: true, requiresConfirmation: false },
-  { id: "host.update", mutates: true, requiresConfirmation: false },
-  { id: "host.job", mutates: false, requiresConfirmation: false },
-  { id: "models.list", mutates: false, requiresConfirmation: false },
-  { id: "models.show", mutates: false, requiresConfirmation: false },
-  { id: "models.pull", mutates: true, requiresConfirmation: false },
-  { id: "models.pullJob", mutates: false, requiresConfirmation: false },
-  { id: "models.pullCancel", mutates: true, requiresConfirmation: false },
-  { id: "models.remove", mutates: true, requiresConfirmation: true },
-];
-
-function descriptor(): ExtensionDescriptor {
-  return {
-    id: "ollama",
-    name: "Ollama",
-    version: "1.0.0",
-    apiVersion,
-    capabilities: [],
-    operations: [...operations],
-  };
-}
-
-// --- Input validation --------------------------------------------------------
+import { openOllamaView } from "./view.ts";
 
 class InvalidInputError extends Error {
   constructor(operation: string, detail: string) {
@@ -91,140 +31,113 @@ class InvalidInputError extends Error {
   }
 }
 
-function requireRecord(
-  operation: string,
-  input: unknown,
-): Record<string, unknown> {
-  if (input === undefined || input === null) return {};
-  if (typeof input !== "object" || Array.isArray(input)) {
-    throw new InvalidInputError(operation, "input must be an object");
-  }
-  return input as Record<string, unknown>;
-}
-
-function requireModelName(operation: string, input: unknown): string {
-  const record = requireRecord(operation, input);
-  const name = record.name;
+function requireModelName(operation: string, name: unknown): string {
   if (typeof name !== "string" || !name.trim()) {
     throw new InvalidInputError(operation, "missing model name");
   }
   return name.trim();
 }
 
-function requireVersion(operation: string, input: unknown): string {
-  const record = requireRecord(operation, input);
-  const version = record.version;
+function requireVersion(operation: string, version: unknown): string {
   if (typeof version !== "string" || !/^v?\d+\.\d+\.\d+/.test(version)) {
     throw new InvalidInputError(operation, "missing or malformed version");
   }
   return version.replace(/^v/, "");
 }
 
-// --- Extension factory ---------------------------------------------------------
+/**
+ * Everything the Ollama view needs, as plain methods. It replaces the
+ * `invoke` operations the browser used to poll: the view runs in the same
+ * process, so there is no RPC surface left to describe.
+ */
+export interface OllamaController {
+  status(signal?: AbortSignal): Promise<HostStatus>;
+  models(signal?: AbortSignal): Promise<ManagedModelList>;
+  hostJob(): JobSnapshot | null;
+  pullJob(): JobSnapshot | null;
+  install(version: string): JobSnapshot;
+  update(version: string): JobSnapshot;
+  pull(name: string): JobSnapshot;
+  cancelPull(): boolean;
+  remove(name: string, signal?: AbortSignal): Promise<{ removed: string }>;
+}
+
+type ManagedModelList = Awaited<ReturnType<typeof listManagedModels>>;
 
 export interface OllamaExtensionDeps {
   client?: OllamaClient;
   jobs?: JobRegistry;
   /** Test seam: skip the real filesystem/network host detection. */
-  detectHost?: () => Promise<HostStatus>;
+  detectHost?: (signal?: AbortSignal) => Promise<HostStatus>;
 }
 
-export function createOllamaExtension(
+export function createOllamaController(
   deps: OllamaExtensionDeps = {},
-): GizmoServerExtension {
+): OllamaController {
   const client = deps.client ?? createOllamaClient();
   const jobs = deps.jobs ?? new JobRegistry();
   const detect =
-    deps.detectHost ?? ((signal: AbortSignal) => detectHost(client, signal));
-
+    deps.detectHost ?? ((signal?: AbortSignal) => detectHost(client, signal));
   const ping = (): Promise<string | null> => client.version();
 
-  const startHostJob = (version: string): JobSnapshot =>
-    jobs.start("host", version, (job, signal) =>
-      installOrUpdate(version, { job, signal, ping }),
+  const startHostJob = (operation: string, version: string): JobSnapshot => {
+    const target = requireVersion(operation, version);
+    return jobs.start("host", target, (job, signal) =>
+      installOrUpdate(target, { job, signal, ping }),
     );
-
-  const startPull = (name: string): JobSnapshot =>
-    jobs.start("pull", name, async (job, signal) => {
-      job.setStage("starting", `Pulling ${name}`);
-      await client.pull(
-        name,
-        (line) => {
-          job.setStage(line.status);
-          job.setProgress({
-            completed: line.completed,
-            total: line.total,
-          });
-        },
-        signal,
-      );
-    });
-
-  async function invoke(
-    operationId: string,
-    input: unknown,
-    signal: AbortSignal,
-  ): Promise<unknown> {
-    switch (operationId) {
-      case "host.status":
-        return detect(signal);
-      case "host.install":
-      case "host.update": {
-        const version = requireVersion(operationId, input);
-        return startHostJob(version);
-      }
-      case "host.job":
-        return jobs.snapshot("host");
-      case "models.list": {
-        const models = await listManagedModels(client, signal);
-        return { models };
-      }
-      case "models.show": {
-        const name = requireModelName(operationId, input);
-        return client.show(name, signal);
-      }
-      case "models.pull": {
-        const name = requireModelName(operationId, input);
-        return startPull(name);
-      }
-      case "models.pullJob":
-        return jobs.snapshot("pull");
-      case "models.pullCancel":
-        return { cancelled: jobs.cancel("pull") };
-      case "models.remove": {
-        const name = requireModelName(operationId, input);
-        await client.remove(name, signal);
-        return { removed: name };
-      }
-      default:
-        throw new Error(
-          `Extension ollama does not expose operation: ${operationId}`,
-        );
-    }
-  }
+  };
 
   return {
-    id: "ollama",
-    name: "Ollama",
-    list: async () => [descriptor()],
-    invoke: async (
-      _workspacePath: string,
-      extensionId: string,
-      operationId: string,
-      input: unknown,
-      signal?: AbortSignal,
-    ) => {
-      if (extensionId !== "ollama") {
-        throw new Error(`Extension is not installed: ${extensionId}`);
-      }
-      if (!operations.some((operation) => operation.id === operationId)) {
-        throw new Error(
-          `Extension ollama does not expose operation: ${operationId}`,
+    status: (signal) => detect(signal),
+    models: async (signal) => listManagedModels(client, signal),
+    hostJob: () => jobs.snapshot("host"),
+    pullJob: () => jobs.snapshot("pull"),
+    install: (version) => startHostJob("host.install", version),
+    update: (version) => startHostJob("host.update", version),
+    pull(name) {
+      const model = requireModelName("models.pull", name);
+      return jobs.start("pull", model, async (job, signal) => {
+        job.setStage("starting", `Pulling ${model}`);
+        await client.pull(
+          model,
+          (line) => {
+            job.setStage(line.status);
+            job.setProgress({ completed: line.completed, total: line.total });
+          },
+          signal,
         );
-      }
-      return invoke(operationId, input, signal ?? new AbortController().signal);
+      });
+    },
+    cancelPull: () => jobs.cancel("pull"),
+    async remove(name, signal) {
+      const model = requireModelName("models.remove", name);
+      await client.remove(model, signal ?? new AbortController().signal);
+      return { removed: model };
     },
   };
+}
+
+export function createOllamaExtension(deps: OllamaExtensionDeps = {}) {
+  const controller = createOllamaController(deps);
+  return defineExtension({
+    id: "ollama",
+    name: "Ollama",
+    views: {
+      models: {
+        label: "Ollama",
+        open: (context) => openOllamaView(controller, context),
+      },
+    },
+    commands: () => [
+      {
+        id: "ollama.models",
+        label: "Ollama: Manage models",
+        keywords: ["ollama", "models", "llm"],
+        icon: "boxes",
+        view: "models",
+      },
+    ],
+  });
 }
 
 /** Host detection: binary + server + upstream version, all fail-soft. */

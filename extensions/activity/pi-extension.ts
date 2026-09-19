@@ -1,9 +1,15 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { defineExtension } from "@gizmo/extension-api";
 
 /**
- * Activity is provided by Gizmo's web UI; Pi only needs a valid extension
- * factory so the paired registry artifact can be activated.
+ * Activity is rendered by Gizmo itself from the tool calls it already
+ * tracks, so this extension contributes no view: nothing in the view
+ * protocol lets an extension read the host's tool activity, and the data
+ * never leaves the client. Pi only needs a valid extension factory here.
  */
-export const gizmoExtension = { id: "activity", name: "Activity" };
+export const gizmoExtension = defineExtension({
+  id: "activity",
+  name: "Activity",
+});
 
 export default function activity(_pi: ExtensionAPI) {}

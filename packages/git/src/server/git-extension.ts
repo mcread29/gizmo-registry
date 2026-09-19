@@ -1,12 +1,17 @@
-import type { ExtensionDescriptor } from "@gizmo/protocol";
-import type { ExtensionContext, GizmoServerExtension } from "@gizmo/extensions";
+import {
+  defineExtension,
+  type ExtensionContext,
+  type ExtensionDescriptor,
+  type StatusItem,
+  type UiContext,
+} from "@gizmo/extension-api";
+import { openChangesView } from "./changes-view";
 import { GitService } from "./git-service";
 
 const apiVersion = 1;
 
 const service = new GitService();
 
-/** Git's single entry point into Gizmo's generic extension contract. */
 function descriptor(): ExtensionDescriptor {
   return {
     id: "git",
@@ -15,24 +20,12 @@ function descriptor(): ExtensionDescriptor {
     apiVersion,
     capabilities: ["status", "stage", "commit", "push"],
     operations: [
-      {
-        id: "commit-context",
-        mutates: false,
-        requiresConfirmation: false,
-      },
+      { id: "commit-context", mutates: false, requiresConfirmation: false },
       { id: "status", mutates: false, requiresConfirmation: false },
       { id: "stage", mutates: true, requiresConfirmation: false },
       { id: "unstage", mutates: true, requiresConfirmation: false },
-      {
-        id: "commit",
-        mutates: true,
-        requiresConfirmation: false,
-      },
-      {
-        id: "push-state",
-        mutates: false,
-        requiresConfirmation: false,
-      },
+      { id: "commit", mutates: true, requiresConfirmation: false },
+      { id: "push-state", mutates: false, requiresConfirmation: false },
       {
         id: "push",
         mutates: true,
@@ -43,8 +36,8 @@ function descriptor(): ExtensionDescriptor {
   };
 }
 
-/** Git's single entry point into Gizmo's generic extension contract. */
-export const gizmoExtension: GizmoServerExtension = {
+/** Git's single entry point into Gizmo's extension contract. */
+export const gizmoExtension = defineExtension({
   id: "git",
   name: "Git",
   createTools: (context: ExtensionContext) => [
@@ -80,7 +73,53 @@ export const gizmoExtension: GizmoServerExtension = {
         throw new Error(`Unknown Git operation: ${operationId}`);
     }
   },
-};
+
+  views: {
+    changes: {
+      label: "Changes",
+      shortLabel: "Git",
+      scope: "workspace",
+      placement: "inspector",
+      open: (context) => openChangesView(service, context),
+    },
+  },
+
+  /** The branch, and how many files differ from HEAD — the old status bar. */
+  statusItems: async (context: UiContext): Promise<StatusItem[]> => {
+    try {
+      const status = await service.status(context.workspacePath);
+      return [
+        {
+          id: "git.branch",
+          label: status.clean
+            ? status.branch
+            : `${status.branch} (${status.files.length})`,
+          tone: status.clean ? "default" : "accent",
+          icon: "git-branch",
+          view: "changes",
+        },
+      ];
+    } catch {
+      // Not a repository, or git is missing: the titlebar simply says nothing.
+      return [];
+    }
+  },
+
+  commands: () => [
+    {
+      id: "git.changes",
+      label: "Show Git changes",
+      keywords: ["git", "changes", "diff", "commit", "push"],
+      icon: "git-branch",
+      view: "changes",
+    },
+  ],
+
+  toolPresentation: {
+    labels: { git_status: "Git status" },
+    icons: { git_status: "git-branch" },
+  },
+});
 
 function filePath(input: unknown) {
   const path = (input as { path?: unknown } | null)?.path;

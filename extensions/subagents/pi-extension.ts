@@ -31,6 +31,12 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Markdown, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import {
+  checkCard,
+  listCard,
+  resultsCard,
+  spawnCard,
+} from "./src/tool-cards.ts";
 import { formatActivityStatus } from "../../packages/orchestration/src/activity-status.ts";
 import { resolveStandaloneChildProjectTrust } from "../../packages/orchestration/src/child-session.ts";
 import {
@@ -728,13 +734,13 @@ export default function (pi: ExtensionAPI) {
               `or use subagent_wait(ids: ["${sub.id}"]) to block for it, subagent_cancel to stop it, subagent_check to peek, subagent_list to see all.`,
           },
         ],
-        details: {
+        details: spawnCard({
           id: sub.id,
           title: sub.title,
           cwd,
           model: `${model.provider}/${model.id}`,
-          prompt_preview: boundedHead(params.prompt),
-        },
+          promptPreview: boundedHead(params.prompt),
+        }),
       };
     },
   });
@@ -816,19 +822,21 @@ export default function (pi: ExtensionAPI) {
         : bounded.content;
       return {
         content: [{ type: "text", text }],
-        details: {
-          results: ids.map((id) => {
+        // The text output stays in content; the card gets a bounded copy
+        // so the result card can show what each agent said.
+        details: resultsCard(
+          "Subagent results",
+          ids.map((id) => {
             const sub = manager.get(id);
             return {
               id,
               ...(sub ? { title: sub.title } : {}),
               ...(sub ? { status: sub.status } : {}),
-              // The text output stays in content; the card gets a bounded
-              // copy so the web presentation can show what each agent said.
               ...(sub ? { output: truncatedOutput(sub, 6 * 1024) } : {}),
             };
           }),
-        },
+          { withOutput: true },
+        ),
       };
     },
   });
@@ -875,12 +883,14 @@ export default function (pi: ExtensionAPI) {
 
       return {
         content: [{ type: "text", text: lines.join("\n") }],
-        details: {
-          results: ids.map((id) => {
+        details: resultsCard(
+          "Cancelled subagents",
+          ids.map((id) => {
             const sub = manager.get(id)!;
             return { id, title: sub.title, status: sub.status };
           }),
-        },
+          { withOutput: false },
+        ),
       };
     },
   });
@@ -919,7 +929,7 @@ export default function (pi: ExtensionAPI) {
 
       return {
         content: [{ type: "text", text }],
-        details: {
+        details: checkCard({
           id: sub.id,
           title: sub.title,
           status: sub.status,
@@ -931,7 +941,7 @@ export default function (pi: ExtensionAPI) {
             ? { output: boundedTail(latestOutput(sub)) }
             : {}),
           ...(sub.errorText ? { error: sub.errorText } : {}),
-        },
+        }),
       };
     },
   });
@@ -949,8 +959,8 @@ export default function (pi: ExtensionAPI) {
           : subs.map((sub) => describeSubagent(sub)).join("\n");
       return {
         content: [{ type: "text", text }],
-        details: {
-          subagents: subs.map((sub) => ({
+        details: listCard(
+          subs.map((sub) => ({
             id: sub.id,
             title: sub.title,
             status: sub.status,
@@ -960,7 +970,7 @@ export default function (pi: ExtensionAPI) {
             elapsed: formatElapsed(sub),
             cwd: sub.cwd,
           })),
-        },
+        ),
       };
     },
   });

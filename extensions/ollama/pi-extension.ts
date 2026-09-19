@@ -2,8 +2,8 @@
  * Ollama — local LLM/SLM models for Gizmo.
  *
  * Pi only needs a valid extension factory here; the management surface lives
- * in `gizmoExtension` (src/server), which the paired browser bundle drives
- * through the workspace inspector.
+ * in `gizmoExtension` (src/server), which contributes the Ollama view the
+ * host renders.
  *
  * The factory registers an `ollama` provider whose model catalog refreshes
  * live from Ollama's `/api/tags` — no static model list, no persistence.

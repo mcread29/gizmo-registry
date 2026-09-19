@@ -17,6 +17,8 @@ import {
   truncateToWidth,
 } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
+import { defineExtension } from "@gizmo/extension-api";
+import { answerCard, type AskUserAnswer } from "./src/answer-card.ts";
 
 const MIN_OPTIONS = 2;
 const MAX_OPTIONS = 5;
@@ -41,14 +43,6 @@ const AskUserParams = Type.Object({
 });
 
 export type AskUserInput = Static<typeof AskUserParams>;
-
-interface AskUserDetails {
-  question: string;
-  options: string[];
-  answer: string | null;
-  wasCustom: boolean;
-  cancelled: boolean;
-}
 
 type SelectionResult = {
   answer: string;
@@ -85,6 +79,20 @@ function wrapText(text: string, width: number): string[] {
   return lines;
 }
 
+/**
+ * Gizmo contributions: the tool's label and the one parameter worth showing
+ * on its card. The card itself is built where the tool answers.
+ */
+export const gizmoExtension = defineExtension({
+  id: "ask-user",
+  name: "Ask the user",
+  toolPresentation: {
+    labels: { ask_user: "Ask the user" },
+    icons: { ask_user: "message-circle-question" },
+    parameters: { ask_user: ["question"] },
+  },
+});
+
 export default function askUser(pi: ExtensionAPI) {
   pi.registerTool({
     name: "ask_user",
@@ -106,13 +114,20 @@ export default function askUser(pi: ExtensionAPI) {
         wasCustom = false,
       ) => ({
         content: [{ type: "text" as const, text }],
+        // The card for Gizmo, and the plain fields Pi's terminal renderer
+        // below reads, in one details object.
         details: {
           question: params.question,
           options: params.options.map((o) => o.label),
           answer,
           wasCustom,
-          cancelled: answer === null,
-        } satisfies AskUserDetails,
+          ...answerCard({
+            question: params.question,
+            options: params.options.map((o) => o.label),
+            answer,
+            wasCustom,
+          }),
+        },
       });
 
       if (
@@ -389,13 +404,13 @@ export default function askUser(pi: ExtensionAPI) {
     },
 
     renderResult(result, _options, theme, _context) {
-      const details = result.details as AskUserDetails | undefined;
+      const details = result.details as AskUserAnswer | undefined;
       if (!details) {
         const first = result.content[0];
         return new Text(first?.type === "text" ? first.text : "", 0, 0);
       }
 
-      if (details.cancelled || details.answer === null) {
+      if (details.answer === null) {
         return new Text(theme.fg("warning", "✗ dismissed"), 0, 0);
       }
 

@@ -4,31 +4,19 @@
  * Loaded in the agent-server process (not Pi's), so it cannot see the live
  * RunController. Instead it reads the run artifacts the workflow tool already
  * persists under `<agentDir>/workflows/<runId>/` (workflow.json, result.json,
- * transcripts.json) and answers web `list`/`invoke` calls from them.
+ * transcripts.json) and renders the Workflows view from them.
  */
 
 import { readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { defineExtension } from "@gizmo/extension-api";
 import {
   readJsonFile,
   workflowRunsDir,
 } from "../../../../packages/orchestration/src/agent-dir.ts";
+import { openWorkflowsView } from "./view.ts";
 
-/** Mirrors Gizmo's `ExtensionDescriptor` without importing `@gizmo/protocol`. */
-interface ExtensionDescriptor {
-  id: string;
-  name: string;
-  version: string;
-  apiVersion: number;
-  capabilities: string[];
-  operations: Array<{
-    id: string;
-    mutates: boolean;
-    requiresConfirmation: boolean;
-  }>;
-}
-
-interface AgentUsageShape {
+export interface AgentUsageShape {
   input?: number;
   output?: number;
   cacheRead?: number;
@@ -38,7 +26,7 @@ interface AgentUsageShape {
   turns?: number;
 }
 
-interface AgentShape {
+export interface AgentShape {
   index: number;
   label?: string;
   phase?: string;
@@ -52,7 +40,7 @@ interface AgentShape {
   usage?: AgentUsageShape;
 }
 
-interface WorkflowShape {
+export interface WorkflowShape {
   runId?: string;
   sessionId?: string;
   cwd?: string;
@@ -72,19 +60,13 @@ interface WorkflowShape {
   error?: string;
 }
 
-interface TranscriptEntryShape {
+export interface TranscriptEntryShape {
   role?: string;
   text?: string;
   name?: string;
   isError?: boolean;
   timestamp?: number;
 }
-
-const OPERATIONS = [
-  { id: "runs", mutates: false, requiresConfirmation: false },
-  { id: "run", mutates: false, requiresConfirmation: false },
-  { id: "transcript", mutates: false, requiresConfirmation: false },
-] as const;
 
 /** Run ids are `wf_` + hex from the tool; enforce that before path joins. */
 const RUN_ID_PATTERN = /^wf_[A-Za-z0-9]+$/;
@@ -95,17 +77,6 @@ const RUN_ID_PATTERN = /^wf_[A-Za-z0-9]+$/;
 const STALE_RUN_MS = 60_000;
 const TRANSCRIPT_MAX_ENTRIES = 400;
 const TRANSCRIPT_TEXT_MAX = 8 * 1024;
-
-function descriptor(): ExtensionDescriptor {
-  return {
-    id: "workflows",
-    name: "Workflows",
-    version: "1.0.0",
-    apiVersion: 1,
-    capabilities: [],
-    operations: OPERATIONS.map((operation) => ({ ...operation })),
-  };
-}
 
 function runDir(runId: string, agentDir?: string): string {
   if (!RUN_ID_PATTERN.test(runId)) {
@@ -155,10 +126,22 @@ function withEffectiveStatus(details: WorkflowShape): WorkflowShape {
   };
 }
 
-function summarize(
-  runId: string,
-  details: WorkflowShape,
-): Record<string, unknown> {
+export interface RunSummary {
+  runId: string;
+  sessionId?: string;
+  name?: string;
+  status?: string;
+  background?: boolean;
+  startedAt?: number;
+  finishedAt?: number;
+  currentPhase?: string;
+  agentsTotal: number;
+  agentsSettled: number;
+  agentsFailed: number;
+  error?: string;
+}
+
+function summarize(runId: string, details: WorkflowShape): RunSummary {
   const agents = details.agents ?? [];
   const settled = agents.filter((agent) => agent.state !== "running").length;
   return {
@@ -183,82 +166,80 @@ function isWorkflow(value: unknown): value is WorkflowShape {
   return typeof candidate.runId === "string" && Array.isArray(candidate.agents);
 }
 
-export const gizmoExtension = {
+/** One run's details, with the stored result rehydrated from result.json. */
+export function readRun(runId: string, agentDir?: string): WorkflowShape {
+  const details = withEffectiveStatus(readWorkflow(runId, agentDir));
+  // The compact artifact keeps a marker in place of the result; the real
+  // value lives in result.json.
+  let result = details.result;
+  if (details.resultArtifact) {
+    const stored = readJsonFile(
+      join(runDir(runId, agentDir), details.resultArtifact),
+    );
+    if (stored !== undefined) result = stored;
+  }
+  return { ...details, result };
+}
+
+export interface TranscriptEntry {
+  role: string;
+  name?: string;
+  isError: boolean;
+  timestamp?: number;
+  text: string;
+}
+
+/** One agent's transcript, bounded in entries and per-entry text. */
+export function readTranscript(
+  runId: string,
+  agent: number,
+  agentDir?: string,
+): TranscriptEntry[] {
+  const transcripts = readJsonFile(
+    join(runDir(runId, agentDir), "transcripts.json"),
+  ) as Record<string, unknown> | undefined;
+  const entries = transcripts?.[String(agent)];
+  if (!Array.isArray(entries)) return [];
+  return (entries as TranscriptEntryShape[])
+    .slice(-TRANSCRIPT_MAX_ENTRIES)
+    .map((entry) => ({
+      role: typeof entry.role === "string" ? entry.role : "event",
+      name: typeof entry.name === "string" ? entry.name : undefined,
+      isError: entry.isError === true,
+      timestamp:
+        typeof entry.timestamp === "number" ? entry.timestamp : undefined,
+      text:
+        typeof entry.text === "string"
+          ? entry.text.slice(0, TRANSCRIPT_TEXT_MAX)
+          : "",
+    }));
+}
+
+export const gizmoExtension = defineExtension({
   id: "workflows",
   name: "Workflows",
-  async list() {
-    return [descriptor()];
+  views: {
+    panel: {
+      label: "Workflows",
+      scope: "thread",
+      open: openWorkflowsView,
+    },
   },
-  async invoke(
-    workspacePath: string,
-    extensionId: string,
-    operationId: string,
-    input: unknown,
-    _signal?: AbortSignal,
-    agentDir?: string,
-  ): Promise<unknown> {
-    if (extensionId !== "workflows") {
-      throw new Error(`Extension is not installed: ${extensionId}`);
-    }
-
-    if (operationId === "runs") {
-      return { runs: listRuns(workspacePath, input, agentDir) };
-    }
-
-    if (operationId === "run") {
-      const runId = readInputString(input, "runId");
-      const details = withEffectiveStatus(readWorkflow(runId, agentDir));
-      // The compact artifact keeps a marker in place of the result; the
-      // real value lives in result.json.
-      let result = details.result;
-      if (details.resultArtifact) {
-        const stored = readJsonFile(
-          join(runDir(runId, agentDir), details.resultArtifact),
-        );
-        if (stored !== undefined) result = stored;
-      }
-      return { ...details, result };
-    }
-
-    if (operationId === "transcript") {
-      const payload = (
-        typeof input === "object" && input !== null ? input : {}
-      ) as { runId?: unknown; agent?: unknown };
-      const runId =
-        typeof payload.runId === "string" ? payload.runId : undefined;
-      const agent =
-        typeof payload.agent === "number" ? payload.agent : undefined;
-      if (!runId || agent === undefined) {
-        throw new Error("transcript requires runId and agent");
-      }
-      const transcripts = readJsonFile(
-        join(runDir(runId), "transcripts.json"),
-      ) as Record<string, unknown> | undefined;
-      const entries = transcripts?.[String(agent)];
-      if (!Array.isArray(entries)) {
-        return { agent, entries: [] };
-      }
-      const bounded = (entries as TranscriptEntryShape[])
-        .slice(-TRANSCRIPT_MAX_ENTRIES)
-        .map((entry) => ({
-          role: typeof entry.role === "string" ? entry.role : "event",
-          name: typeof entry.name === "string" ? entry.name : undefined,
-          isError: entry.isError === true,
-          timestamp:
-            typeof entry.timestamp === "number" ? entry.timestamp : undefined,
-          text:
-            typeof entry.text === "string"
-              ? entry.text.slice(0, TRANSCRIPT_TEXT_MAX)
-              : "",
-        }));
-      return { agent, entries: bounded };
-    }
-
-    throw new Error(
-      `Extension workflows does not expose operation: ${operationId}`,
-    );
+  commands: () => [
+    {
+      id: "workflows.panel",
+      label: "Workflows: Show runs",
+      keywords: ["workflow", "runs", "orchestration"],
+      icon: "workflow",
+      view: "panel",
+    },
+  ],
+  toolPresentation: {
+    labels: { workflow: "Workflow" },
+    icons: { workflow: "workflow" },
+    parameters: { workflow: ["background"] },
   },
-};
+});
 
 /**
  * Runs launched from the given thread in the given workspace, newest first.
@@ -269,7 +250,7 @@ export function listRuns(
   workspacePath: string,
   input: unknown,
   agentDir?: string,
-): Record<string, unknown>[] {
+): RunSummary[] {
   const payload = (
     typeof input === "object" && input !== null ? input : {}
   ) as { sessionId?: unknown };
@@ -284,7 +265,7 @@ export function listRuns(
   } catch {
     return [];
   }
-  const runs: Record<string, unknown>[] = [];
+  const runs: RunSummary[] = [];
   for (const name of names) {
     if (!RUN_ID_PATTERN.test(name)) continue;
     const value = readJsonFile(
@@ -303,19 +284,7 @@ export function listRuns(
     runs.push(summarize(name, withEffectiveStatus(value)));
   }
   runs.sort(
-    (left, right) =>
-      (Number(right.startedAt) || 0) - (Number(left.startedAt) || 0),
+    (left, right) => (right.startedAt ?? 0) - (left.startedAt ?? 0),
   );
   return runs;
-}
-
-function readInputString(input: unknown, key: string): string {
-  const payload = (
-    typeof input === "object" && input !== null ? input : {}
-  ) as Record<string, unknown>;
-  const value = payload[key];
-  if (typeof value !== "string" || !value) {
-    throw new Error(`${key} is required`);
-  }
-  return value;
 }

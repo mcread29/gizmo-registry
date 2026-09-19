@@ -1,6 +1,6 @@
 {
   "extensionsDir": "extensions",
-  "build": "pnpm install --frozen-lockfile && pnpm build",
+  "gizmoApiVersion": 1,
   "extensions": [
     {
       "id": "activity",

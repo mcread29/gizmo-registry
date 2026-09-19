@@ -1,1 +1,1 @@
-export { default } from "./pi-extension.ts";
+export { default, gizmoExtension } from "./pi-extension.ts";
