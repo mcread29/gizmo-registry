@@ -1,9 +1,10 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   affectsUnityCompilation,
+  projectRelativePath,
   UnityCompilationTracker,
 } from "./unity-compilation-tracker";
 import { createUnityTrackedFileTools } from "./unity-file-tools";
@@ -50,5 +51,30 @@ describe("Unity compilation tracking", () => {
       compilationPaths: ["Assets/Player.cs"],
     });
     expect(tracker.paths).toEqual(["Assets/Player.cs"]);
+  });
+});
+
+describe("projectRelativePath", () => {
+  const project = resolve("/projects/ncp");
+
+  it("names a file inside the project the way Unity does", () => {
+    expect(projectRelativePath("Assets/Player.cs", project)).toBe(
+      "Assets/Player.cs",
+    );
+    expect(
+      projectRelativePath(resolve(project, "Assets/Player.cs"), project),
+    ).toBe("Assets/Player.cs");
+  });
+
+  it("leaves a file outside the project absolute", () => {
+    const outside = resolve("/elsewhere/Other.cs");
+    expect(isAbsolute(projectRelativePath(outside, project))).toBe(true);
+  });
+
+  it("counts one file once however it was named", () => {
+    const tracker = new UnityCompilationTracker();
+    tracker.mark("Assets/Player.cs", project);
+    const paths = tracker.mark(resolve(project, "Assets/Player.cs"), project);
+    expect(paths).toEqual(["Assets/Player.cs"]);
   });
 });

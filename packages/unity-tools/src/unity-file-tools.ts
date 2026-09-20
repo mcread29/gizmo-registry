@@ -36,7 +36,7 @@ export function createUnityTrackedFileTools(
           details: {
             ...result.details,
             compilationPending: true,
-            compilationPaths: tracker.mark(params.path),
+            compilationPaths: tracker.mark(params.path, cwd),
           },
         };
       },
@@ -61,7 +61,7 @@ export function createUnityTrackedFileTools(
           ...result,
           details: {
             compilationPending: true,
-            compilationPaths: tracker.mark(params.path),
+            compilationPaths: tracker.mark(params.path, cwd),
           },
         };
       },
