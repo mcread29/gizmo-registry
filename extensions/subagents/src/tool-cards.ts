@@ -28,6 +28,9 @@ export function spawnCard(entry: {
   title: string;
   model: string;
   cwd: string;
+  tier?: string;
+  /** Tiers this run climbs to if the current one fails, weakest first. */
+  escalation?: readonly string[];
   promptPreview?: string;
 }) {
   const view: View = {
@@ -39,7 +42,15 @@ export function spawnCard(entry: {
         type: "keyValue",
         entries: [
           { label: "Title", value: entry.title },
+          ...(entry.tier ? [{ label: "Tier", value: entry.tier }] : []),
           { label: "Model", value: entry.model },
+          {
+            label: "Escalates to",
+            value:
+              entry.escalation && entry.escalation.length > 0
+                ? entry.escalation.join(" → ")
+                : "nothing — a failure is final",
+          },
           { label: "Working directory", value: entry.cwd },
           ...(entry.promptPreview
             ? [{ label: "Prompt", value: entry.promptPreview }]

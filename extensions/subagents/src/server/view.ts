@@ -58,6 +58,19 @@ function detailBlocks(
         { label: "ID", value: sub.id },
         { label: "Status", value: sub.status, tone: toneOf(sub.status) },
         { label: "Model", value: sub.model ?? "unknown" },
+        ...(sub.tier ? [{ label: "Tier", value: sub.tier }] : []),
+        ...(sub.escalations
+          ? [
+              {
+                label: "Escalated",
+                value:
+                  sub.escalations === 1
+                    ? "once, after a failed tier"
+                    : `${sub.escalations} times, after failed tiers`,
+                tone: "warning" as const,
+              },
+            ]
+          : []),
         { label: "Working directory", value: sub.cwd },
         { label: "Elapsed", value: elapsed(sub) },
         ...(sub.context ? [{ label: "Context", value: sub.context }] : []),

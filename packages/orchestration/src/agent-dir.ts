@@ -25,6 +25,16 @@ export function expandHome(path: string): string {
   return path;
 }
 
+/** Root of everything the subagents extension persists under the agent dir. */
+export function subagentsDir(agentDir = resolveAgentDir()): string {
+  return join(agentDir, "subagents");
+}
+
+/** Directory where the subagents extension journals escalations between tiers. */
+export function subagentJournalDir(agentDir = resolveAgentDir()): string {
+  return join(agentDir, "subagents", "journal");
+}
+
 /** Directory where the subagents extension writes per-session state files. */
 export function subagentStateDir(agentDir = resolveAgentDir()): string {
   return join(agentDir, "subagents", "state");

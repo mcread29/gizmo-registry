@@ -24,6 +24,8 @@ import {
 } from "../../../packages/orchestration/src/child-session.ts";
 import type { ContextUtilization } from "../../../packages/orchestration/src/context-utilization.ts";
 import { createToolCallTimeoutGuard } from "./tool-call-timeout.ts";
+import type { Tier } from "./tiers.ts";
+import { buildSuccessorPrompt, type SuccessorHandoff } from "./handoff.ts";
 
 export const MAX_RUNNING = 4;
 export const MAX_TRACKED = 64;
@@ -49,6 +51,13 @@ export type ThinkingLevel = ReturnType<ExtensionAPI["getThinkingLevel"]>;
 
 export type SubagentStatus = "running" | "done" | "error";
 
+/** One rung of a subagent's ladder: a resolved model and its thinking level. */
+export interface TierRung {
+  tier: Tier;
+  model: Model<any>;
+  thinkingLevel: ThinkingLevel;
+}
+
 export interface Subagent {
   id: string;
   title: string;
@@ -60,18 +69,44 @@ export interface Subagent {
   createdAt: number;
   settledAt?: number;
   errorText?: string;
+  /** Rungs this run may use, weakest first; the current one is `rung`. */
+  ladder: TierRung[];
+  rung: number;
+  /** How many times this run has climbed after a failed rung. */
+  escalations: number;
+  projectTrusted: boolean;
+  /** How a failed rung hands its context to the next one. */
+  summarizeFailure?: FailureSummarizer;
   /** Lightweight lifecycle listener used only for status accounting. */
   unsubscribeLifecycle?: () => void;
 }
+
+/**
+ * Produces the context a failed rung hands to its successor: the attempt is
+ * summarized and journalled by the caller, and the returned hand-off (if any)
+ * is folded into the next run's prompt. Returning nothing still escalates,
+ * just without memory of the failure.
+ */
+export type FailureSummarizer = (
+  sub: Subagent,
+  failure: string,
+  nextTier: Tier,
+) => Promise<SuccessorHandoff | undefined>;
 
 export interface SpawnOptions {
   prompt: string;
   title: string;
   cwd: string;
-  model?: Model<any>;
-  thinkingLevel?: ThinkingLevel;
+  /** Rungs from the requested tier upward; at least one. */
+  ladder: TierRung[];
   modelRegistry: ModelRegistry;
   projectTrusted: boolean;
+  summarizeFailure?: FailureSummarizer;
+}
+
+/** The rung a subagent is currently running on. */
+export function currentRung(sub: Subagent): TierRung | undefined {
+  return sub.ladder[sub.rung];
 }
 
 /** Narrow an AgentMessage-ish value to a pi-ai Message role. */
@@ -248,22 +283,11 @@ export class SubagentManager {
     this.reservedSpawns++;
     let session: AgentSession | undefined;
     try {
-      const { loader: resourceLoader, settingsManager } =
-        await createChildResources({
-          cwd: options.cwd,
-          projectTrusted: options.projectTrusted,
-        });
-      ({ session } = await createAgentSession({
-        cwd: options.cwd,
-        sessionManager: SessionManager.create(options.cwd),
-        settingsManager,
-        resourceLoader,
-        model: options.model,
-        thinkingLevel: options.thinkingLevel,
-        ...childToolPolicy(),
-      }));
-      await bindChildSessionExtensions(session);
-      this.toolCallTimeout.apply(session);
+      session = await this.createSession(
+        options.cwd,
+        options.ladder[0]!,
+        options.projectTrusted,
+      );
 
       if (this.disposed) {
         throw new Error("Subagent manager shut down while spawning.");
@@ -279,22 +303,16 @@ export class SubagentManager {
         modelRegistry: options.modelRegistry,
         status: "running",
         createdAt: Date.now(),
+        ladder: options.ladder,
+        rung: 0,
+        escalations: 0,
+        projectTrusted: options.projectTrusted,
+        ...(options.summarizeFailure
+          ? { summarizeFailure: options.summarizeFailure }
+          : {}),
       };
       this.subagents.set(id, sub);
-      sub.unsubscribeLifecycle = session.subscribe((event) => {
-        if (this.disposed) return;
-        if (event.type === "agent_start") {
-          // Extensions may register tools between runs, so pick up any new
-          // definitions before this run can execute one.
-          this.toolCallTimeout.apply(sub.session);
-          sub.status = "running";
-          sub.settledAt = undefined;
-          sub.errorText = undefined;
-          this.notifyChange();
-        } else if (event.type === "agent_settled") {
-          this.settle(sub);
-        }
-      });
+      this.subscribeLifecycle(sub);
 
       try {
         session.sessionManager.appendSessionInfo(`subagent: ${options.title}`);
@@ -313,6 +331,45 @@ export class SubagentManager {
       this.reservedSpawns--;
       this.notifyChange();
     }
+  }
+
+  private async createSession(
+    cwd: string,
+    rung: TierRung,
+    projectTrusted: boolean,
+  ): Promise<AgentSession> {
+    const { loader: resourceLoader, settingsManager } =
+      await createChildResources({ cwd, projectTrusted });
+    const { session } = await createAgentSession({
+      cwd,
+      sessionManager: SessionManager.create(cwd),
+      settingsManager,
+      resourceLoader,
+      model: rung.model,
+      thinkingLevel: rung.thinkingLevel,
+      ...childToolPolicy(),
+    });
+    await bindChildSessionExtensions(session);
+    this.toolCallTimeout.apply(session);
+    return session;
+  }
+
+  private subscribeLifecycle(sub: Subagent) {
+    sub.unsubscribeLifecycle?.();
+    sub.unsubscribeLifecycle = sub.session.subscribe((event) => {
+      if (this.disposed) return;
+      if (event.type === "agent_start") {
+        // Extensions may register tools between runs, so pick up any new
+        // definitions before this run can execute one.
+        this.toolCallTimeout.apply(sub.session);
+        sub.status = "running";
+        sub.settledAt = undefined;
+        sub.errorText = undefined;
+        this.notifyChange();
+      } else if (event.type === "agent_settled") {
+        this.settle(sub);
+      }
+    });
   }
 
   /**
@@ -371,6 +428,25 @@ export class SubagentManager {
       sub.errorText !== undefined ||
       last?.stopReason === "error" ||
       last?.stopReason === "aborted";
+
+    // A failed rung is not a failed task: climb the ladder once more before
+    // reporting failure, so strength is spent only on work that needs it.
+    if (
+      failed &&
+      !this.cancelling.has(sub) &&
+      sub.rung + 1 < sub.ladder.length
+    ) {
+      const failure = sub.errorText ?? last?.errorMessage ?? "the run failed";
+      sub.rung += 1;
+      sub.escalations += 1;
+      sub.status = "running";
+      sub.settledAt = undefined;
+      sub.errorText = undefined;
+      this.notifyChange();
+      void this.escalate(sub, boundedError(failure));
+      return;
+    }
+
     sub.status = failed ? "error" : "done";
     if (!sub.errorText && last?.errorMessage) {
       sub.errorText = boundedError(last.errorMessage);
@@ -387,6 +463,52 @@ export class SubagentManager {
       // must remain final and cleanup must continue.
     }
     this.pruneSettled();
+  }
+
+  /**
+   * Re-runs the same task on the next ladder rung. The new session starts
+   * clean, so the failure that triggered the climb travels with the prompt.
+   */
+  private async escalate(sub: Subagent, failure: string) {
+    const rung = sub.ladder[sub.rung];
+    if (!rung) return;
+    const previous = sub.session;
+    sub.unsubscribeLifecycle?.();
+    sub.unsubscribeLifecycle = undefined;
+    let session: AgentSession;
+    try {
+      session = await this.createSession(sub.cwd, rung, sub.projectTrusted);
+    } catch (error) {
+      sub.errorText = boundedError(error);
+      this.settle(sub);
+      return;
+    }
+    if (this.disposed || !this.subagents.has(sub.id)) {
+      this.trackCleanup(this.stopSession(session));
+      return;
+    }
+    sub.session = session;
+    this.subscribeLifecycle(sub);
+    try {
+      session.sessionManager.appendSessionInfo(
+        `subagent: ${sub.title} (${rung.tier})`,
+      );
+    } catch {
+      // Session naming is best-effort.
+    }
+    this.trackCleanup(this.stopSession(previous));
+    const fromTier = sub.ladder[sub.rung - 1]?.tier ?? "lower";
+    // Hand the failure over before starting again: the successor should read
+    // what happened, not rediscover it.
+    const handoff = await sub
+      .summarizeFailure?.(sub, failure, rung.tier)
+      .catch(() => undefined);
+    await this.run(
+      sub,
+      handoff
+        ? buildSuccessorPrompt(sub.prompt, handoff)
+        : `${sub.prompt}\n\n[A previous attempt on the ${fromTier} tier failed: ${failure}. You are now on the ${rung.tier} tier: continue the task from scratch.]`,
+    );
   }
 
   /**

@@ -24,6 +24,10 @@ export interface SubagentStateEntry {
   title: string;
   status: SubagentStateStatus;
   model?: string;
+  /** Ladder rung this run is on: "base" | "mid" | "strong". */
+  tier?: string;
+  /** How many rungs this run has climbed after failures. */
+  escalations?: number;
   cwd: string;
   startedAt: number;
   settledAt?: number;

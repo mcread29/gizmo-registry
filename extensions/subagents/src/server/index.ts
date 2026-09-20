@@ -45,13 +45,7 @@ export const gizmoExtension = defineExtension({
       subagent_list: "users",
     },
     parameters: {
-      subagent_spawn: [
-        "title",
-        "working_dir",
-        "model",
-        "provider",
-        "reasoning_effort",
-      ],
+      subagent_spawn: ["title", "working_dir", "tier", "reasoning_effort"],
       subagent_check: ["id"],
     },
   },

@@ -2,20 +2,24 @@
  * Subagents - spawn background pi threads from the parent agent.
  *
  * Tools (for the parent LLM):
- * - subagent_spawn: fire-and-forget spawn (prompt, title, working_dir, model,
- *   provider, reasoning_effort). Max 4 running at once.
+ * - subagent_spawn: fire-and-forget spawn (prompt, title, working_dir, tier,
+ *   reasoning_effort). Max 4 running at once.
  * - subagent_wait: block until the listed subagents settle, return results.
  * - subagent_cancel: stop one or more running subagents.
  * - subagent_check: peek at a subagent's status and recent activity.
  * - subagent_list: list all subagents.
  *
  * Unawaited subagents queue their result as a follow-up message when they
- * settle. `/subagents` opens a picker + full interactive takeover view.
+ * settle. `/subagents` opens a picker + full interactive takeover view, and
+ * `/subagents tiers` configures the three model rungs a spawn draws from.
+ *
+ * Spawning is gated on those rungs existing on purpose: delegation is a cost
+ * decision, so it gets made once, deliberately, instead of silently inheriting
+ * whatever model the parent happens to be running.
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { Model } from "@earendil-works/pi-ai";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type {
   ExtensionAPI,
@@ -51,13 +55,13 @@ import {
 import {
   activeModel,
   contextUsage,
+  currentRung,
   finalOutput,
   formatElapsed,
   latestOutput,
   MAX_RUNNING,
   type Subagent,
   SubagentManager,
-  type ThinkingLevel,
 } from "./src/manager.ts";
 import { createDeferredResultDelivery } from "./src/result-delivery.ts";
 import { gizmoExtension } from "./src/server/index.ts";
@@ -71,22 +75,20 @@ import {
   type SubagentThreadMessage,
 } from "./src/state.ts";
 import { openSubagentPicker } from "./src/takeover.ts";
+import { EFFORTS, readTiers, TIERS } from "./src/tiers.ts";
+import {
+  configureTiers,
+  resolveLadder,
+  tiersGuidance,
+} from "./src/tier-setup.ts";
+import { createFailureSummarizer } from "./src/failure-handoff.ts";
+import { messageText } from "./src/message-text.ts";
 
 export { gizmoExtension };
 
 const SUBAGENT_OUTPUT_MAX_BYTES = 24 * 1024;
 const WAIT_OUTPUT_MAX_BYTES = 48 * 1024;
 const WAIT_PER_AGENT_MAX_BYTES = 16 * 1024;
-
-const THINKING_LEVELS = [
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-] as const;
 
 function describeSubagent(sub: Subagent): string {
   const model = activeModel(sub);
@@ -107,6 +109,8 @@ function toStateEntry(sub: Subagent): SubagentStateEntry {
     title: sub.title,
     status: sub.status,
     ...(model ? { model: `${model.provider}/${model.id}` } : {}),
+    ...(currentRung(sub) ? { tier: currentRung(sub)!.tier } : {}),
+    ...(sub.escalations > 0 ? { escalations: sub.escalations } : {}),
     cwd: sub.cwd,
     startedAt: sub.createdAt,
     ...(sub.settledAt !== undefined ? { settledAt: sub.settledAt } : {}),
@@ -145,31 +149,6 @@ function buildResultText(sub: Subagent): string {
   return text;
 }
 
-function messageText(message: unknown) {
-  const value = message as {
-    role?: string;
-    content?:
-      | string
-      | Array<{
-          type?: string;
-          text?: string;
-          thinking?: string;
-          name?: string;
-        }>;
-  };
-  if (typeof value.content === "string") return value.content;
-  if (!Array.isArray(value.content)) return "";
-  return value.content
-    .map((part) => {
-      if (part.type === "text") return part.text ?? "";
-      if (part.type === "thinking") return part.thinking ?? "";
-      if (part.type === "toolCall") return `[tool] ${part.name ?? "unknown"}`;
-      return "";
-    })
-    .filter(Boolean)
-    .join("\n");
-}
-
 /** Full transcript of one subagent, oldest first, for the web thread view. */
 function threadMessages(sub: Subagent): SubagentThreadMessage[] {
   const messages: SubagentThreadMessage[] = [];
@@ -206,43 +185,11 @@ function transcriptLines(sub: Subagent) {
   return { lines: lines.slice(-120), truncated: lines.length > 120 };
 }
 
-function resolveModel(
-  ctx: ExtensionContext,
-  provider: string | undefined,
-  modelId: string | undefined,
-): Model<any> {
-  if (!provider && !modelId) {
-    if (!ctx.model)
-      throw new Error("No model is currently active to inherit from.");
-    return ctx.model;
-  }
-  if (!modelId) {
-    throw new Error(
-      `Provider "${provider}" given without a model. Specify model too.`,
-    );
-  }
-  const preferredProvider = provider ?? ctx.model?.provider;
-  if (preferredProvider) {
-    const found = ctx.modelRegistry.find(preferredProvider, modelId);
-    if (found) return found;
-  }
-  if (provider) {
-    throw new Error(`Unknown model "${provider}/${modelId}".`);
-  }
-  const matches = ctx.modelRegistry.getAll().filter((m) => m.id === modelId);
-  if (matches.length === 1) return matches[0];
-  if (matches.length > 1) {
-    throw new Error(
-      `Model "${modelId}" exists in multiple providers (${matches.map((m) => m.provider).join(", ")}). Specify a provider.`,
-    );
-  }
-  throw new Error(`Unknown model "${modelId}".`);
-}
-
 export default function (pi: ExtensionAPI) {
   const manager = new SubagentManager();
   const resultDelivery = createDeferredResultDelivery<Subagent>();
   let sessionContext: ExtensionContext | undefined;
+  const summarizeFailure = createFailureSummarizer(() => sessionContext);
   let ui: ExtensionUIContext | undefined;
   let dashboardView: ReturnType<typeof createDeclarativeView> | undefined;
   let detailView: ReturnType<typeof createDeclarativeView> | undefined;
@@ -683,26 +630,28 @@ export default function (pi: ExtensionAPI) {
           description: "Working directory (default: current working directory)",
         }),
       ),
-      model: Type.Optional(
-        Type.String({
-          description: "Model id (default: inherit the current model)",
-        }),
-      ),
-      provider: Type.Optional(
-        Type.String({
-          description: "Model provider (default: inherit the current provider)",
+      tier: Type.Optional(
+        StringEnum(TIERS, {
+          description:
+            "Tier to start on: base (default) for most breadth work, mid or strong only when you already know the task defeats the cheaper model. Failed runs climb one tier at a time.",
         }),
       ),
       reasoning_effort: Type.Optional(
-        StringEnum(THINKING_LEVELS, {
-          description: "Thinking level (default: inherit the current level)",
+        StringEnum(EFFORTS, {
+          description:
+            "Override the starting tier's effort for this run only; escalated tiers keep their configured effort.",
         }),
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const model = resolveModel(ctx, params.provider, params.model);
-      const thinkingLevel = (params.reasoning_effort ??
-        pi.getThinkingLevel()) as ThinkingLevel;
+      const tiers = readTiers();
+      if (!tiers) throw new Error(tiersGuidance());
+      const ladder = resolveLadder(
+        ctx,
+        tiers,
+        params.tier ?? "base",
+        params.reasoning_effort,
+      );
 
       const cwd = path.resolve(ctx.cwd, params.working_dir ?? ".");
       if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) {
@@ -714,22 +663,27 @@ export default function (pi: ExtensionAPI) {
         prompt: params.prompt,
         title,
         cwd,
-        model,
-        thinkingLevel,
+        ladder,
         modelRegistry: ctx.modelRegistry,
         projectTrusted: resolveStandaloneChildProjectTrust({
           parentCwd: ctx.cwd,
           childCwd: cwd,
           parentTrusted: ctx.isProjectTrusted(),
         }),
+        summarizeFailure,
       });
 
+      const start = ladder[0]!;
+      const climbs = ladder.slice(1).map((rung) => rung.tier);
       return {
         content: [
           {
             type: "text",
             text:
-              `Spawned subagent ${sub.id} "${sub.title}" (${model.provider}/${model.id}, ${cwd}).\n` +
+              `Spawned subagent ${sub.id} "${sub.title}" on the ${start.tier} tier (${start.model.provider}/${start.model.id}, ${cwd}).\n` +
+              (climbs.length > 0
+                ? `If that run fails it climbs to ${climbs.join(" → ")}.\n`
+                : "It has no tier left to climb to; a failure is final.\n") +
               `It runs in the background. Its result will be delivered to you when it finishes, ` +
               `or use subagent_wait(ids: ["${sub.id}"]) to block for it, subagent_cancel to stop it, subagent_check to peek, subagent_list to see all.`,
           },
@@ -738,7 +692,9 @@ export default function (pi: ExtensionAPI) {
           id: sub.id,
           title: sub.title,
           cwd,
-          model: `${model.provider}/${model.id}`,
+          tier: start.tier,
+          model: `${start.model.provider}/${start.model.id}`,
+          escalation: climbs,
           promptPreview: boundedHead(params.prompt),
         }),
       };
@@ -1030,8 +986,13 @@ export default function (pi: ExtensionAPI) {
   // --- Command ------------------------------------------------------------
 
   pi.registerCommand("subagents", {
-    description: "List, inspect, and take over subagents",
-    handler: async (_args, ctx) => {
+    description:
+      "List, inspect, and take over subagents; `tiers` configures the model ladder",
+    handler: async (args, ctx) => {
+      if (args.trim().toLowerCase() === "tiers") {
+        await configureTiers(ctx);
+        return;
+      }
       if (supportsDeclarativeUi(ctx)) {
         openDeclarativeDashboard(ctx);
         return;
