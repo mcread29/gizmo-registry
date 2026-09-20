@@ -12,6 +12,6 @@ export default defineConfig({
   test: {
     maxWorkers: 1,
     environment: "node",
-    exclude: [...configDefaults.exclude, "extensions/*/skills/**"],
+    exclude: [...configDefaults.exclude, "extensions/*/skills/**", "local/**"],
   },
 });
