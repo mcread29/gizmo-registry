@@ -12,8 +12,9 @@ pnpm check
 pnpm test
 ```
 
-Gizmo follows the `v1` branch for extension API major 1 and checks
-`gizmoApiVersion` in `gizmo.registry.json`. Link extensions under
+Gizmo follows the `release` branch and checks `gizmoApiVersion` in
+`gizmo.registry.json`, refusing a registry written for another extension API
+major. Link extensions under
 **Settings → Extensions**. Updates install server dependencies and reload linked
 extensions. The host supplies `@gizmo/extension-api` at runtime.
 

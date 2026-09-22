@@ -1,5 +1,12 @@
 # Work log
 
+## 2026-09-22 — Gizmo follows the `release` branch
+
+- The branch Gizmo clones and fetches is `release` instead of `v1`, so it
+  no longer reads like one of the registry's `vX.Y.Z` tags.
+  `gizmoApiVersion` in `gizmo.registry.json` still guards the API major.
+- README and AGENTS describe the branch and the tag per release.
+
 ## 2026-09-22 — ask_user card marks a written answer like a picked one
 
 - A written answer is listed under the options as a marked "Written" row,

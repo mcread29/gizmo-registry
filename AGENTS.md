@@ -10,8 +10,9 @@ remote feature branches or pull requests.
 - A **release** is a squash of the scratch branch onto `main`: one commit
   with a release-style message, not a merge of the branch history
   (`git merge --squash <branch>` on `main`, then a single commit). The
-  per-API-major release branch (`v1`) is then moved to that commit and
-  tagged, as the Gizmo host's `docs/release.md` describes.
+  `release` branch Gizmo follows is then moved to that commit, and the
+  commit is tagged `vMAJOR.MINOR.PATCH` (the registry's own numbering), as
+  the Gizmo host's `docs/release.md` describes.
 - `main` is therefore a clean history of releases; the scratch branch is
   disposable once squashed.
 
