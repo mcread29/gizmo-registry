@@ -1,6 +1,6 @@
 /**
  * The ask_user result card, as a view the host renders: the question, the
- * options with the chosen one selected, and the answer. The question itself
+ * options with the chosen one (or the written answer) marked. The question itself
  * is still asked through Gizmo's generic select/input bridge.
  */
 
@@ -14,41 +14,41 @@ export interface AskUserAnswer {
 }
 
 export function answerView(details: AskUserAnswer): View {
+  const { question, options, answer, wasCustom } = details;
+  const items: { id: string; label: string; detail?: string }[] = options.map(
+    (label, index) => ({
+      id: `option-${index + 1}`,
+      label,
+    }),
+  );
+  // A written answer sits under the options and is marked the same way a
+  // picked one is, so the card reads as the choices and what came of them.
+  if (answer !== null && wasCustom)
+    items.push({ id: "written", label: answer, detail: "Written" });
+  const picked =
+    answer === null
+      ? -1
+      : wasCustom
+        ? items.length - 1
+        : options.indexOf(answer);
   const blocks: View["blocks"] = [
-    { type: "text", text: details.question },
+    { type: "text", text: question },
     {
       type: "list",
       id: "options",
-      items: details.options.map((label, index) => ({
-        id: `option-${index + 1}`,
-        label,
-      })),
-      ...(details.answer !== null && !details.wasCustom
-        ? (() => {
-            const index = details.options.indexOf(details.answer);
-            return index >= 0 ? { selectedId: `option-${index + 1}` } : {};
-          })()
-        : {}),
+      items,
+      ...(picked >= 0 ? { selectedId: items[picked]!.id } : {}),
     },
   ];
-  blocks.push(
-    details.answer === null
-      ? {
-          type: "text",
-          text: "Dismissed without an answer",
-          tone: "muted",
-        }
-      : {
-          type: "text",
-          text: details.wasCustom
-            ? `Wrote: ${details.answer}`
-            : details.answer,
-          tone: "success",
-        },
-  );
+  if (answer === null)
+    blocks.push({
+      type: "text",
+      text: "Dismissed without an answer",
+      tone: "muted",
+    });
   return {
     title: "Ask the user",
-    status: details.answer === null ? "warning" : "success",
+    status: answer === null ? "warning" : "success",
     blocks,
   };
 }

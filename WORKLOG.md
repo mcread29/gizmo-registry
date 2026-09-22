@@ -1,5 +1,11 @@
 # Work log
 
+## 2026-09-22 — ask_user card marks a written answer like a picked one
+
+- A written answer is listed under the options as a marked "Written" row,
+  instead of a green "Wrote: …" line; the separate answer line under a
+  picked option is gone, since the marked row already says it.
+
 ## 2026-09-22 — Subagents view: filter and cost total
 
 - Summary adds a Cost entry (sum of every subagent's cost).

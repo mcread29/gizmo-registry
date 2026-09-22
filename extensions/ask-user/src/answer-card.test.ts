@@ -12,12 +12,29 @@ describe("ask_user card", () => {
     });
     expect(parseView(view)).toEqual(view);
     expect(view.blocks[1]).toMatchObject({ selectedId: "option-2" });
-    expect(answerCard({
+    expect(
+      answerCard({
+        question: "Which way?",
+        options: ["Left", "Right"],
+        answer: null,
+        wasCustom: false,
+      }),
+    ).toHaveProperty("gizmoDisplay");
+  });
+
+  it("lists a written answer as the marked row", () => {
+    const view = answerView({
       question: "Which way?",
       options: ["Left", "Right"],
-      answer: null,
-      wasCustom: false,
-    })).toHaveProperty("gizmoDisplay");
+      answer: "Straight on",
+      wasCustom: true,
+    });
+    expect(parseView(view)).toEqual(view);
+    expect(view.blocks).toHaveLength(2);
+    expect(view.blocks[1]).toMatchObject({
+      selectedId: "written",
+      items: [{}, {}, { id: "written", label: "Straight on" }],
+    });
   });
 
   it("reports a dismissal", () => {
