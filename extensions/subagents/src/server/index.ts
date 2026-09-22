@@ -7,12 +7,32 @@
  * cancellation belong to the process that owns the subagents.
  */
 
-import { defineExtension } from "@gizmo/extension-api";
+import { defineExtension, type SettingsField } from "@gizmo/extension-api";
+import { TIER_SETTING_KEYS, TIERS, tierLabel } from "../tiers.ts";
 import { openSubagentsView } from "./view.ts";
+
+const TIER_HELP: Record<(typeof TIERS)[number], string> = {
+  base: "Where every spawn starts: everyday breadth work.",
+  mid: "Climbed to when the base rung fails.",
+  strong: "The expensive rung, reached only when the others fail.",
+};
+
+/**
+ * One model per rung of the ladder. The Pi side reads these straight from
+ * Gizmo's settings file, ahead of anything `/subagents tiers` wrote.
+ */
+const settings: SettingsField[] = TIERS.map((tier) => ({
+  kind: "model",
+  key: TIER_SETTING_KEYS[tier],
+  label: `${tierLabel(tier)} tier`,
+  description: TIER_HELP[tier],
+  thinking: true,
+}));
 
 export const gizmoExtension = defineExtension({
   id: "subagents",
   name: "Subagents",
+  settings,
   views: {
     panel: {
       label: "Subagents",

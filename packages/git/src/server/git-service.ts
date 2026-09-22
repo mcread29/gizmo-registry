@@ -4,8 +4,9 @@ import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { readGitOutput } from "./git-output";
 import type { GitCommitResult, GitFileStatus, GitStatus } from "./git-types";
-import { underPath } from "./paths";
+import { isJournalPath, underPath } from "./paths";
 import type { GitPushResult, GitPushState } from "../push";
 
 const execFileAsync = promisify(execFile);
@@ -23,21 +24,26 @@ export class GitService {
       ),
       this.#branch(rootPath, signal),
     ]);
-    const files = parsePorcelain(porcelain);
+    const files = parsePorcelain(porcelain).filter(
+      (file) => !isJournalPath(file.path),
+    );
     return { rootPath, branch, clean: files.length === 0, files };
   }
 
   async diff(projectPath: string, file: string, signal?: AbortSignal) {
     const rootPath = await this.#root(projectPath, signal);
-    const { stdout } = await this.#git(
+    const tracked = await readGitOutput(
       rootPath,
       ["diff", "HEAD", "--no-ext-diff", "--unified=3", "--", file],
-      signal,
+      maxGitOutput,
+      { signal },
     );
     // An untracked file is in no diff git can take against HEAD, so rather
     // than show the reader nothing, read it as one long addition.
-    if (stdout.trim()) return { file, diff: stdout };
-    return { file, diff: await this.#addedDiff(rootPath, file, signal) };
+    const output = tracked.text.trim()
+      ? tracked
+      : await this.#addedDiff(rootPath, file, signal);
+    return { file, diff: markTruncated(output) };
   }
 
   /**
@@ -57,21 +63,10 @@ export class GitService {
       "/dev/null",
       file,
     ];
-    try {
-      const { stdout } = await execFileAsync("git", args, {
-        cwd: rootPath,
-        encoding: "utf8",
-        maxBuffer: maxGitOutput,
-        ...(signal ? { signal } : {}),
-      });
-      return stdout;
-    } catch (error) {
-      const stdout =
-        typeof error === "object" && error && "stdout" in error
-          ? error.stdout
-          : "";
-      return typeof stdout === "string" ? stdout : "";
-    }
+    return readGitOutput(rootPath, args, maxGitOutput, {
+      signal,
+      acceptExitCodes: [1],
+    });
   }
 
   async commitContext(
@@ -80,18 +75,23 @@ export class GitService {
   ): Promise<string> {
     const status = await this.status(projectPath, signal);
     if (status.clean) throw new Error("There are no changes to commit");
+    // The diffs are scoped to the files the status kept, which is how the
+    // journal stays out of them: pathspecs are literal here, so exclusion
+    // magic is not available and listing the paths is the one way left.
+    const paths = status.files.flatMap((file) =>
+      file.originalPath ? [file.originalPath, file.path] : [file.path],
+    );
+    // Only the first `maxPromptDiff` characters reach the model, so git is
+    // read no further than that: a tree with megabytes of changes must
+    // not fail the call, it just gets cut where it would have been anyway.
+    const read = (args: string[]) =>
+      readGitOutput(status.rootPath, [...args, "--", ...paths], maxPromptDiff, {
+        signal,
+      });
     const [staged, unstaged, stat] = await Promise.all([
-      this.#git(
-        status.rootPath,
-        ["diff", "--cached", "--no-ext-diff", "--unified=2"],
-        signal,
-      ),
-      this.#git(
-        status.rootPath,
-        ["diff", "--no-ext-diff", "--unified=2"],
-        signal,
-      ),
-      this.#git(status.rootPath, ["diff", "HEAD", "--stat"], signal),
+      read(["diff", "--cached", "--no-ext-diff", "--unified=2"]),
+      read(["diff", "--no-ext-diff", "--unified=2"]),
+      read(["diff", "HEAD", "--stat"]),
     ]);
     const fileList = status.files
       .map((file) => `${file.index}${file.workingTree} ${file.path}`)
@@ -99,9 +99,9 @@ export class GitService {
     return [
       `Branch: ${status.branch}`,
       `Files:\n${fileList}`,
-      `Stat:\n${stat.stdout.trim() || "(untracked files only)"}`,
-      `Staged diff:\n${staged.stdout.trim() || "(none)"}`,
-      `Unstaged diff:\n${unstaged.stdout.trim() || "(none)"}`,
+      `Stat:\n${markTruncated(stat).trim() || "(untracked files only)"}`,
+      `Staged diff:\n${markTruncated(staged).trim() || "(none)"}`,
+      `Unstaged diff:\n${markTruncated(unstaged).trim() || "(none)"}`,
     ]
       .join("\n\n")
       .slice(0, maxPromptDiff);
@@ -328,6 +328,13 @@ export class GitService {
       );
     }
   }
+}
+
+/** The text, ending with a note when git had more than was read. */
+function markTruncated(output: { text: string; truncated: boolean }): string {
+  return output.truncated
+    ? `${output.text}\n… (output truncated)\n`
+    : output.text;
 }
 
 function parsePorcelain(output: string): GitFileStatus[] {

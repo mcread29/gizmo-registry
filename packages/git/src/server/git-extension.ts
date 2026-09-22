@@ -2,15 +2,28 @@ import {
   defineExtension,
   type ExtensionContext,
   type ExtensionDescriptor,
+  type SettingsField,
   type StatusItem,
   type UiContext,
 } from "@gizmo/extension-api";
 import { openChangesView } from "./changes-view";
+import { commitMessageModelKey } from "./commit-message";
 import { GitService } from "./git-service";
 
 const apiVersion = 1;
 
 const service = new GitService();
+
+const settings: SettingsField[] = [
+  {
+    kind: "model",
+    key: commitMessageModelKey,
+    label: "Commit message model",
+    description:
+      "Drafts commit messages in the Changes panel. Leave unset to use the host's default model.",
+    thinking: true,
+  },
+];
 
 function descriptor(): ExtensionDescriptor {
   return {
@@ -40,6 +53,7 @@ function descriptor(): ExtensionDescriptor {
 export const gizmoExtension = defineExtension({
   id: "git",
   name: "Git",
+  settings,
   createTools: (context: ExtensionContext) => [
     service.createStatusTool(context.workspacePath),
   ],

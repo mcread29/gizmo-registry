@@ -9,7 +9,6 @@ import { stopPlayModeConfirmation } from "../../packages/unity/src/server/domain
 
 export { gizmoExtension };
 
-
 export default function unity(pi: ExtensionAPI) {
   registerUnityDocs(pi);
 
@@ -51,7 +50,11 @@ export default function unity(pi: ExtensionAPI) {
     const existing = byWorkspace.get(cwd);
     if (existing) return existing;
     const created =
-      gizmoExtension.createTools?.({ workspacePath: cwd, confirm }) ?? [];
+      gizmoExtension.createTools?.({
+        workspacePath: cwd,
+        confirm,
+        settings: {},
+      }) ?? [];
     byWorkspace.set(cwd, created);
     return created;
   };

@@ -55,7 +55,7 @@ export function tiersGuidance(): string {
         .map(tierLabel)
         .join(
           ", ",
-        )}). Run /subagents tiers to choose a model and effort for the base, mid, and strong tiers. The Subagents tab reports the ladder but cannot set it: the agent-server process does not own the subagents.`;
+        )}). Choose a model and effort for the base, mid, and strong tiers in Gizmo's Settings → Extensions → Subagents, or run /subagents tiers. The Subagents tab reports the ladder but cannot set it: the agent-server process does not own the subagents.`;
 }
 
 export function describeModel(model: ReturnType<typeof activeModel>): string {

@@ -1,4 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
@@ -13,14 +19,17 @@ import {
   type TierConfig,
 } from "./tiers.ts";
 
+let agentDir: string;
 let directory: string;
 
 beforeEach(() => {
-  directory = mkdtempSync(join(tmpdir(), "subagent-tiers-"));
+  agentDir = mkdtempSync(join(tmpdir(), "subagent-tiers-"));
+  directory = join(agentDir, "subagents");
+  mkdirSync(directory);
 });
 
 afterEach(() => {
-  rmSync(directory, { recursive: true, force: true });
+  rmSync(agentDir, { recursive: true, force: true });
 });
 
 function config(): TierConfig {
@@ -52,6 +61,32 @@ test("a partial configuration is still missing tiers", () => {
 
   expect(readTiers(directory)).toBeUndefined();
   expect(missingTiers(file.tiers)).toEqual(["strong"]);
+});
+
+test("rungs chosen in Gizmo's settings win over tiers.json", () => {
+  writeTiers(config(), directory);
+  writeFileSync(
+    join(directory, "..", "extension-settings.json"),
+    JSON.stringify({
+      version: 1,
+      extensions: {
+        subagents: {
+          tierStrong: {
+            provider: "anthropic",
+            id: "opus",
+            thinkingLevel: "max",
+          },
+          tierMid: { provider: "anthropic", id: "sonnet" },
+        },
+      },
+    }),
+  );
+
+  expect(readTiers(directory)).toEqual({
+    base: config().base,
+    mid: { provider: "anthropic", model: "sonnet", effort: "medium" },
+    strong: { provider: "anthropic", model: "opus", effort: "max" },
+  });
 });
 
 test("the ladder only ever climbs", () => {

@@ -16,6 +16,9 @@ export interface ChangesState {
   diff?: { file: string; diff: string };
   error?: string;
   loading: boolean;
+  /** A drafted message, offered as the commit input's starting text. */
+  suggestion?: string;
+  suggesting?: boolean;
 }
 
 export const staged = (file: GitFileStatus) =>
@@ -152,8 +155,16 @@ function toolbar(state: ChangesState): Action[] {
         kind: "multiline",
         label: "Commit message",
         placeholder: "What changed, and why",
+        ...(state.suggestion ? { initialValue: state.suggestion } : {}),
         required: true,
       },
+    },
+    {
+      id: "suggest",
+      label: state.suggesting ? "Drafting…" : "Suggest message",
+      icon: "sparkles",
+      group: "secondary",
+      disabled: !status || status.clean || Boolean(state.suggesting),
     },
     {
       id: "push",

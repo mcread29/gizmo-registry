@@ -17,6 +17,10 @@ Gizmo follows the `v1` branch for extension API major 1 and checks
 **Settings → Extensions**. Updates install server dependencies and reload linked
 extensions. The host supplies `@gizmo/extension-api` at runtime.
 
+Development happens on local scratch branches that are squashed onto `main`
+for each release; nothing is pushed as a feature branch or pull request. See
+[AGENTS.md](AGENTS.md) for that and the other conventions.
+
 For development, the API dependency currently links to a sibling Gizmo checkout
 at `../gizmo/packages/extension-api`. Publishing the API and replacing this local
 link with a pinned package version remain prerequisites for a standalone release.

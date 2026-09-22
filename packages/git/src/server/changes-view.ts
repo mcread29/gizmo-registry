@@ -19,6 +19,7 @@ import {
   renderChangesView,
   type ChangesState,
 } from "./changes-render";
+import { suggestCommitMessage } from "./commit-message";
 import type { GitService } from "./git-service";
 import { underPath } from "./paths";
 
@@ -131,6 +132,20 @@ export function openChangesView(
           await refresh();
           return { status: "succeeded", message: `Reverted ${path}` };
         }
+        case "suggest": {
+          state.suggesting = true;
+          push();
+          try {
+            state.suggestion = await suggestCommitMessage(
+              context,
+              await service.commitContext(context.workspacePath),
+            );
+          } finally {
+            state.suggesting = false;
+            push();
+          }
+          return { status: "succeeded", message: "Commit message drafted" };
+        }
         case "commit": {
           const message = event.value?.trim();
           if (!message)
@@ -139,6 +154,7 @@ export function openChangesView(
             context.workspacePath,
             message,
           );
+          state.suggestion = undefined;
           await refresh();
           return {
             status: "succeeded",

@@ -36,8 +36,32 @@ export interface SubagentStateEntry {
   context?: string;
   /** Bounded tail of the subagent's latest text output. */
   outputPreview?: string;
-  /** Bounded head of the task prompt, for context in the UI. */
+  /** Bounded head of the task prompt, for the list row. */
   promptPreview?: string;
+  /** Thinking level of the current ladder rung, when known. */
+  thinkingLevel?: string;
+  /** Assistant messages produced so far. */
+  turns?: number;
+  /** Tool calls issued so far. */
+  toolCalls?: number;
+  /** Cumulative token usage across this run's assistant responses. */
+  tokens?: {
+    input: number;
+    output: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+    total?: number;
+  };
+  /** Cumulative cost in USD, when the provider reports it. */
+  cost?: number;
+  /** Absolute path of the child's own session file (outside the workspace). */
+  sessionFile?: string;
+  /** Full task prompt, bounded; `promptPreview` stays the short form. */
+  prompt?: string;
+  /** Rendered ladder rungs, e.g. `base: openai/gpt-5 · low`. */
+  ladder?: string[];
+  /** Newest transcript activity, when known. */
+  lastActivityAt?: number;
 }
 
 /**
@@ -61,14 +85,26 @@ export interface SubagentStateFile {
   pid?: number;
 }
 
+/** Which message a transcript entry came from. */
+export type SubagentThreadRole = "user" | "assistant" | "toolResult" | "event";
+
+/** What the entry holds: one content part, not a joined message. */
+export type SubagentThreadKind =
+  "text" | "thinking" | "toolCall" | "toolResult";
+
 /**
- * One message of a subagent's transcript, as served to the web UI. Roles are
- * Pi's own (`user`, `assistant`, `toolResult`, ...); tool calls read as
- * `[tool] name` so the thread stays readable without tool schemas.
+ * One entry of a subagent's transcript, as served to the web UI. There is one
+ * entry per content part, so reasoning, prose, tool calls and tool results
+ * stay distinguishable instead of collapsing into a single text blob.
  */
 export interface SubagentThreadMessage {
-  role: string;
+  role: SubagentThreadRole;
+  kind: SubagentThreadKind;
   text: string;
+  /** Tool name, for `toolCall`/`toolResult` entries. */
+  name?: string;
+  /** Message timestamp, when the source carried one. */
+  at?: number;
 }
 
 /** One subagent's transcript, written by the Pi side and read by the server. */
@@ -97,8 +133,10 @@ export interface ReadMergedOptions {
 
 const OUTPUT_PREVIEW_BYTES = 2_048;
 const PROMPT_PREVIEW_LENGTH = 240;
-/** Messages kept per transcript; the newest survive. */
-const THREAD_MESSAGE_LIMIT = 200;
+/** Full prompt kept in the snapshot, so the panel can show the whole task. */
+export const PROMPT_LIMIT = 4_096;
+/** Entries kept per transcript; the newest survive. */
+const THREAD_MESSAGE_LIMIT = 300;
 const THREAD_TEXT_LIMIT = 8_000;
 
 export function stateFilePath(sessionId: string, agentDir?: string): string {
@@ -278,10 +316,13 @@ export function writeSubagentThread(
   const dir = subagentThreadDir(options.agentDir);
   const kept = messages.slice(-THREAD_MESSAGE_LIMIT).map((message) => ({
     role: message.role,
+    kind: message.kind,
     text:
       message.text.length > THREAD_TEXT_LIMIT
         ? `…${message.text.slice(-THREAD_TEXT_LIMIT)}`
         : message.text,
+    ...(message.name !== undefined ? { name: message.name } : {}),
+    ...(message.at !== undefined ? { at: message.at } : {}),
   }));
   const payload: SubagentThreadFile = {
     sessionId,
@@ -308,7 +349,34 @@ export function readSubagentThread(
   agentDir?: string,
 ): SubagentThreadFile | undefined {
   const value = readJsonFile(threadFilePath(sessionId, id, agentDir));
-  return isThreadFile(value) ? value : undefined;
+  if (!isThreadFile(value)) return undefined;
+  return { ...value, messages: value.messages.map(normalizeThreadMessage) };
+}
+
+const THREAD_ROLES = new Set(["user", "assistant", "toolResult", "event"]);
+const THREAD_KINDS = new Set(["text", "thinking", "toolCall", "toolResult"]);
+
+/**
+ * Accepts entries written before transcripts were structured, where a message
+ * was a joined `{ role, text }` blob: those become plain `text` entries.
+ */
+function normalizeThreadMessage(value: unknown): SubagentThreadMessage {
+  const raw = (value ?? {}) as Partial<SubagentThreadMessage>;
+  const role =
+    typeof raw.role === "string" && THREAD_ROLES.has(raw.role)
+      ? (raw.role as SubagentThreadRole)
+      : "event";
+  const kind =
+    typeof raw.kind === "string" && THREAD_KINDS.has(raw.kind)
+      ? (raw.kind as SubagentThreadKind)
+      : "text";
+  return {
+    role,
+    kind,
+    text: typeof raw.text === "string" ? raw.text : "",
+    ...(typeof raw.name === "string" ? { name: raw.name } : {}),
+    ...(typeof raw.at === "number" ? { at: raw.at } : {}),
+  };
 }
 
 /** Drops every transcript belonging to one parent session. */
@@ -350,6 +418,7 @@ export function boundedTail(text: string, maxBytes = OUTPUT_PREVIEW_BYTES) {
   return `…${text.slice(text.length - maxBytes)}`;
 }
 
+/** Truncates from the end so the head (the task statement) survives. */
 export function boundedHead(text: string, maxLength = PROMPT_PREVIEW_LENGTH) {
   if (text.length <= maxLength) return text;
   return `${text.slice(0, maxLength)}…`;

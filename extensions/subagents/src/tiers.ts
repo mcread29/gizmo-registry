@@ -13,7 +13,7 @@
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { subagentsDir } from "../../../packages/orchestration/src/agent-dir.ts";
 
 export const TIERS = ["base", "mid", "strong"] as const;
@@ -60,6 +60,19 @@ export interface ModelCatalog {
 const TIERS_FILE = "tiers.json";
 const MODELS_FILE = "models.json";
 
+/**
+ * Gizmo stores every extension's settings in `extension-settings.json`
+ * beside the subagents directory. A rung set there (a `model` field per
+ * tier) wins over `tiers.json`, so the Settings page and `/subagents tiers`
+ * describe the same ladder.
+ */
+const SETTINGS_FILE = "extension-settings.json";
+export const TIER_SETTING_KEYS: Record<Tier, string> = {
+  base: "tierBase",
+  mid: "tierMid",
+  strong: "tierStrong",
+};
+
 export function tiersFilePath(dir = subagentsDir()): string {
   return join(dir, TIERS_FILE);
 }
@@ -95,7 +108,46 @@ export function describeTier(setting: TierSetting): string {
 }
 
 export function readTierFile(dir = subagentsDir()): TierFile | undefined {
-  return readJson<TierFile>(tiersFilePath(dir), isTierFile);
+  const file = readJson<TierFile>(tiersFilePath(dir), isTierFile);
+  const fromSettings = readSettingsTiers(dir);
+  if (Object.keys(fromSettings).length === 0) return file;
+  return {
+    updatedAt: file?.updatedAt ?? 0,
+    tiers: { ...file?.tiers, ...fromSettings },
+  };
+}
+
+/** Rungs chosen in Gizmo's extension settings, keyed by tier. */
+export function readSettingsTiers(
+  dir = subagentsDir(),
+): Partial<Record<Tier, TierSetting>> {
+  const settings = readJson<Record<string, unknown>>(
+    join(dirname(dir), SETTINGS_FILE),
+    (value): value is Record<string, unknown> =>
+      typeof value === "object" && value !== null,
+  );
+  const extensions = settings?.extensions as
+    Record<string, Record<string, unknown> | undefined> | undefined;
+  const values = extensions?.subagents ?? {};
+  const tiers: Partial<Record<Tier, TierSetting>> = {};
+  for (const tier of TIERS) {
+    const setting = toTierSetting(values[TIER_SETTING_KEYS[tier]]);
+    if (setting) tiers[tier] = setting;
+  }
+  return tiers;
+}
+
+/** A `model` settings value (`{provider, id, thinkingLevel?}`) as a rung. */
+function toTierSetting(value: unknown): TierSetting | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const { provider, id, thinkingLevel } = value as Record<string, unknown>;
+  if (typeof provider !== "string" || !provider) return undefined;
+  if (typeof id !== "string" || !id) return undefined;
+  return {
+    provider,
+    model: id,
+    effort: isEffort(thinkingLevel) ? thinkingLevel : "medium",
+  };
 }
 
 /** The configured rungs, or undefined while any is missing. */

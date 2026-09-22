@@ -9,6 +9,12 @@
  * - subagent_check: peek at a subagent's status and recent activity.
  * - subagent_list: list all subagents.
  *
+ * Gizmo's "Subagents" inspector panel (see ./src/server/view.ts) is fed from
+ * the bounded snapshots and structured transcripts this file writes to
+ * `<agentDir>/subagents/` (see ./src/state.ts): model, thinking level, tier
+ * ladder, turn/tool/token/cost counters, the task prompt, the latest output
+ * and the per-part transcript.
+ *
  * Unawaited subagents queue their result as a follow-up message when they
  * settle. `/subagents` opens a picker + full interactive takeover view, and
  * `/subagents tiers` configures the three model rungs a spawn draws from.
@@ -20,7 +26,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { StringEnum } from "@earendil-works/pi-ai";
+import { StringEnum, type AssistantMessage } from "@earendil-works/pi-ai";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -60,7 +66,9 @@ import {
   formatElapsed,
   latestOutput,
   MAX_RUNNING,
+  messageRole,
   type Subagent,
+  type TierRung,
   SubagentManager,
 } from "./src/manager.ts";
 import { createDeferredResultDelivery } from "./src/result-delivery.ts";
@@ -68,6 +76,7 @@ import { gizmoExtension } from "./src/server/index.ts";
 import {
   boundedHead,
   boundedTail,
+  PROMPT_LIMIT,
   removeSubagentThreads,
   writeSubagentState,
   writeSubagentThread,
@@ -101,27 +110,101 @@ function describeSubagent(sub: Subagent): string {
   return `${sub.id} [${sub.status}] "${sub.title}" (${details.join(", ")})`;
 }
 
+/** Cumulative token/cost usage across a subagent's assistant responses. */
+function usageTotals(sub: Subagent) {
+  const totals = {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    total: 0,
+    cost: 0,
+    turns: 0,
+    toolCalls: 0,
+  };
+  for (const message of sub.session.messages) {
+    if (messageRole(message) !== "assistant") continue;
+    const assistant = message as AssistantMessage;
+    totals.turns += 1;
+    totals.toolCalls += assistant.content.filter(
+      (part) => part.type === "toolCall",
+    ).length;
+    const usage = assistant.usage;
+    if (!usage) continue;
+    totals.input += usage.input ?? 0;
+    totals.output += usage.output ?? 0;
+    totals.cacheRead += usage.cacheRead ?? 0;
+    totals.cacheWrite += usage.cacheWrite ?? 0;
+    totals.total += usage.totalTokens ?? 0;
+    totals.cost += usage.cost?.total ?? 0;
+  }
+  return totals;
+}
+
+function describeRung(rung: TierRung): string {
+  const model = `${rung.model.provider}/${rung.model.id}`;
+  return `${rung.tier}: ${model}${rung.thinkingLevel ? ` · ${rung.thinkingLevel}` : ""}`;
+}
+
+function lastActivityAt(sub: Subagent): number | undefined {
+  for (let i = sub.session.messages.length - 1; i >= 0; i--) {
+    const at = (sub.session.messages[i] as { timestamp?: number }).timestamp;
+    if (typeof at === "number") return at;
+  }
+  return undefined;
+}
+
 /** Bounded snapshot of one subagent for the Gizmo web state bridge. */
 function toStateEntry(sub: Subagent): SubagentStateEntry {
   const model = activeModel(sub);
+  const rung = currentRung(sub);
+  const usage = usageTotals(sub);
+  const activity = lastActivityAt(sub);
+  const context = formatContextUtilization(contextUsage(sub));
+  const hasTokens = usage.input + usage.output + usage.total > 0;
   return {
     id: sub.id,
     title: sub.title,
     status: sub.status,
     ...(model ? { model: `${model.provider}/${model.id}` } : {}),
-    ...(currentRung(sub) ? { tier: currentRung(sub)!.tier } : {}),
+    ...(rung ? { tier: rung.tier } : {}),
+    ...(rung?.thinkingLevel
+      ? { thinkingLevel: String(rung.thinkingLevel) }
+      : {}),
+    ...(sub.ladder.length > 0 ? { ladder: sub.ladder.map(describeRung) } : {}),
     ...(sub.escalations > 0 ? { escalations: sub.escalations } : {}),
     cwd: sub.cwd,
     startedAt: sub.createdAt,
     ...(sub.settledAt !== undefined ? { settledAt: sub.settledAt } : {}),
+    ...(activity !== undefined ? { lastActivityAt: activity } : {}),
     ...(sub.errorText ? { error: sub.errorText } : {}),
-    ...(formatContextUtilization(contextUsage(sub))
-      ? { context: formatContextUtilization(contextUsage(sub)) }
+    ...(context ? { context } : {}),
+    ...(usage.turns > 0 ? { turns: usage.turns } : {}),
+    ...(usage.toolCalls > 0 ? { toolCalls: usage.toolCalls } : {}),
+    ...(hasTokens
+      ? {
+          tokens: {
+            input: usage.input,
+            output: usage.output,
+            cacheRead: usage.cacheRead,
+            cacheWrite: usage.cacheWrite,
+            total: usage.total,
+          },
+        }
+      : {}),
+    ...(usage.cost > 0 ? { cost: usage.cost } : {}),
+    ...(sub.session.sessionFile
+      ? { sessionFile: sub.session.sessionFile }
       : {}),
     ...(latestOutput(sub)
       ? { outputPreview: boundedTail(latestOutput(sub)) }
       : {}),
-    ...(sub.prompt ? { promptPreview: boundedHead(sub.prompt) } : {}),
+    ...(sub.prompt
+      ? {
+          promptPreview: boundedHead(sub.prompt),
+          prompt: boundedHead(sub.prompt, PROMPT_LIMIT),
+        }
+      : {}),
   };
 }
 
@@ -149,23 +232,74 @@ function buildResultText(sub: Subagent): string {
   return text;
 }
 
-/** Full transcript of one subagent, oldest first, for the web thread view. */
+/** One-line summary of a tool call's arguments, for the transcript. */
+function summarizeToolArguments(args: Record<string, unknown> | undefined) {
+  if (!args) return "";
+  for (const value of Object.values(args)) {
+    if (typeof value === "string" && value.trim()) {
+      const line = value.trim().split("\n")[0] ?? "";
+      return line.length > 160 ? `${line.slice(0, 160)}…` : line;
+    }
+  }
+  const keys = Object.keys(args);
+  return keys.length > 0 ? keys.join(", ") : "";
+}
+
+function partText(part: { type?: string; text?: string }) {
+  return typeof part.text === "string" ? part.text : "";
+}
+
+/**
+ * Full transcript of one subagent, oldest first, for the web thread view:
+ * one entry per content part so thinking, prose, tool calls and tool results
+ * stay distinguishable in the panel.
+ */
 function threadMessages(sub: Subagent): SubagentThreadMessage[] {
-  const messages: SubagentThreadMessage[] = [];
+  const entries: SubagentThreadMessage[] = [];
   for (const message of sub.session.messages) {
-    const text = messageText(message);
-    if (!text) continue;
-    messages.push({
-      role: (message as { role?: string }).role ?? "event",
-      text,
-    });
+    const role = messageRole(message) ?? "event";
+    const at = (message as { timestamp?: number }).timestamp;
+    const stamp = typeof at === "number" ? { at } : {};
+    const content = (message as { content?: unknown }).content;
+    if (typeof content === "string") {
+      if (content.trim())
+        entries.push({ role, kind: "text", text: content, ...stamp });
+      continue;
+    }
+    if (!Array.isArray(content)) continue;
+    const toolName = (message as { toolName?: string }).toolName;
+    for (const part of content as Array<Record<string, any>>) {
+      if (part.type === "text") {
+        const text = partText(part);
+        if (!text.trim()) continue;
+        entries.push({
+          role,
+          kind: role === "toolResult" ? "toolResult" : "text",
+          text,
+          ...(role === "toolResult" && toolName ? { name: toolName } : {}),
+          ...stamp,
+        });
+      } else if (part.type === "thinking") {
+        const thinking = typeof part.thinking === "string" ? part.thinking : "";
+        if (!thinking.trim()) continue;
+        entries.push({ role, kind: "thinking", text: thinking, ...stamp });
+      } else if (part.type === "toolCall") {
+        entries.push({
+          role,
+          kind: "toolCall",
+          text: summarizeToolArguments(part.arguments),
+          name: typeof part.name === "string" ? part.name : "unknown",
+          ...stamp,
+        });
+      }
+    }
   }
   // While streaming, the newest text lives outside the message list.
   const live = latestOutput(sub);
   if (sub.session.isStreaming && live) {
-    messages.push({ role: "assistant", text: live });
+    entries.push({ role: "assistant", kind: "text", text: live });
   }
-  return messages;
+  return entries;
 }
 
 function transcriptLines(sub: Subagent) {

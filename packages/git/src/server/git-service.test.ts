@@ -56,6 +56,48 @@ describe("GitService", () => {
     });
   });
 
+  it("summarises a working tree whose diff is larger than git's buffer", async () => {
+    // Well past the 4 MB execFile cap the old implementation died on.
+    await writeFile(
+      join(directory, "tracked.txt"),
+      `${"y".repeat(60)}\n`.repeat(90_000),
+    );
+
+    const service = new GitService();
+    const context = await service.commitContext(directory);
+    expect(context.length).toBeLessThanOrEqual(60_000);
+    expect(context).toContain("Unstaged diff:");
+
+    const { diff } = await service.diff(directory, "tracked.txt");
+    expect(diff).toContain("+yyyy");
+    expect(diff).toContain("(output truncated)");
+    expect(diff.length).toBeLessThan(4 * 1024 * 1024 + 100);
+  });
+
+  it("keeps the memory journal out of the status and the diff", async () => {
+    // A committed journal changes on every turn; an untracked one is noise.
+    const journal = join(directory, ".gizmo", "memory", "journal");
+    await mkdir(join(journal, "facts"), { recursive: true });
+    await writeFile(join(journal, "2026-09-22.md"), "turn one\n");
+    await git(directory, ["add", "--all"]);
+    await git(directory, ["commit", "-m", "Add journal"]);
+    await writeFile(join(journal, "2026-09-22.md"), "turn two\n");
+    await writeFile(join(journal, "facts", "a.json"), "{}\n");
+    await writeFile(join(directory, "tracked.txt"), "after\n");
+
+    const service = new GitService();
+    const status = await service.status(directory);
+    expect(status.files.map((file) => file.path)).toEqual(["tracked.txt"]);
+
+    const context = await service.commitContext(directory);
+    expect(context).toContain("+after");
+    expect(context).not.toContain("journal");
+    expect(context).not.toContain("turn two");
+
+    await writeFile(join(directory, "tracked.txt"), "before\n");
+    expect((await service.status(directory)).clean).toBe(true);
+  });
+
   it("stages and unstages individual files", async () => {
     await writeFile(join(directory, "tracked.txt"), "after\n");
     await writeFile(join(directory, "other.txt"), "other\n");

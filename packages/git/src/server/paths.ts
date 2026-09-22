@@ -6,3 +6,14 @@
 export function underPath(candidate: string, path: string): boolean {
   return candidate === path || candidate.startsWith(`${path}/`);
 }
+
+/**
+ * Where Gizmo keeps a workspace's memory journal, digests and facts. They
+ * change on every turn, so left in they would swamp the status and the
+ * diff with pages of the agent's own notes.
+ */
+export const journalPath = ".gizmo/memory";
+
+export function isJournalPath(path: string): boolean {
+  return underPath(path, journalPath);
+}
